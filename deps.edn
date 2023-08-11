@@ -4,6 +4,10 @@
   com.taoensso/timbre {:mvn/version "6.2.2"}}
 
  :aliases
- {:virtual
-  {:exec-fn fuzz.core/main
-   :jvm-opts [ "--enable-preview" "--add-modules" "jdk.incubator.concurrent"]}}}
+ {:virtual {:exec-fn fuzz.core/main
+            :jvm-opts [ "--enable-preview" "--add-modules" "jdk.incubator.concurrent"]}
+
+  :uberjar {:replace-deps {com.github.seancorfield/depstar {:mvn/version "2.1.303"}}
+            :jvm-opts [ "--enable-preview" "--add-modules" "jdk.incubator.concurrent"]
+            :exec-fn hf.depstar/uberjar
+            :exec-args {:aot true}}}}

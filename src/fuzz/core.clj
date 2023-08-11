@@ -2,12 +2,11 @@
   (:require 
     [clojure.string :as str]
     [clj-http.client :as client]
-    [promesa.core :as p]
-    [promesa.exec :as px]
     [promesa.exec.csp :as sp]
     [taoensso.timbre :as timbre])
   (:import
-    [org.apache.http.impl.client HttpClientBuilder]))
+    [org.apache.http.impl.client HttpClientBuilder])
+  (:gen-class))
 
 (def word-chan (sp/chan :buf 35))
 (def threads-chan (sp/chan))
@@ -50,7 +49,7 @@
                   (sp/put! threads-chan requests)
                   requests))))
 
-(defn main [& args]
+(defn -main [& args]
   (let [_
         (timbre/info "starting")
 
