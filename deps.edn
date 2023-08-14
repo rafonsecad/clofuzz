@@ -1,10 +1,11 @@
 {:deps
  {funcool/promesa {:mvn/version "11.0.671"} 
   clj-http/clj-http {:mvn/version "3.12.3"} 
-  com.taoensso/timbre {:mvn/version "6.2.2"}}
+  com.taoensso/timbre {:mvn/version "6.2.2"}
+  org.clojure/tools.cli {:mvn/version "1.0.219"}}
 
  :aliases
- {:virtual {:exec-fn fuzz.core/main
+ {:virtual {:main-opts ["-m" "fuzz.core"] 
             :jvm-opts [ "--enable-preview" "--add-modules" "jdk.incubator.concurrent"]}
 
   :uberjar {:replace-deps {com.github.seancorfield/depstar {:mvn/version "2.1.303"}}
