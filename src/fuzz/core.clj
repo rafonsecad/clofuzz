@@ -2,6 +2,7 @@
   (:require 
     [clojure.string :as str]
     [clojure.java.io :as io]
+    [clojure.set :as set]
     [clj-http.client :as client]
     [promesa.exec.csp :as sp]
     [taoensso.timbre :as timbre]
@@ -40,21 +41,36 @@
     (timbre/info {:status status :word word})
     (swap! matches conj {:status status :word word})))
 
-(defn receive [base-url status-list]
+(defn receive [base-url code-list]
   (sp/go-loop [requests 0]
               (if-let [word (sp/take! word-chan)]
                 (do 
                   (-> (mk-request base-url word)
-                      (validate status-list word))
+                      (validate code-list word))
                   (recur (inc requests)))
                 (do 
                   (sp/put! threads-chan requests)
                   requests))))
 
+(defn parse-mc [codes]
+  (->> (str/split codes #",")
+       (mapv #(Integer/parseInt %))))
+
 (def cli-options [["-u" "--url URL" "target URL"
                    :validate [#(str/starts-with? % "http") "http(s):// protocol missing"]]
                   ["-w" "--wordlist WORDLIST" "wordlist file path"
                    :validate [#(.exists (io/file %)) "can't find wordlist"]]
+                  [nil "--match-codes HTTP CODES" "match http response code list separated by comma"
+                   :default [200 204 301 302 307 401 403 405 500]
+                   :parse-fn parse-mc
+                   :validate [(fn [v]
+                                (every? #(< 100 % 600) v))
+
+                              (fn [v] 
+                                (->> (filter #(not (< 100 % 600)) v)
+                                     (str/join ",") 
+                                     (str "invalid http response code(s): ")))]
+                   ]
                   ["-h" "--help" "prints help"]])
 
 (defn validate-args [args]
@@ -66,7 +82,7 @@
       (some? errors)
       {:exit-message errors :ok? false}
 
-      (not= (set (keys options)) #{:wordlist :url})
+      (not (set/subset? #{:wordlist :url} (set (keys options))))
       {:exit-message "missing wordlist or url" :ok? false}
       
       (not (str/includes? (:url options) "FUZZ"))
@@ -79,7 +95,7 @@
   (println msg)
   (System/exit status))
 
-(defn start-scan [{:keys [wordlist url]}]
+(defn start-scan [{:keys [wordlist url match-codes]}]
   (let [_
         (timbre/info "starting")
 
@@ -88,7 +104,7 @@
 
         _
         (doseq [_ (range 30)] 
-          (receive url [200 401]))]
+          (receive url match-codes))]
     (loop [threads-done 1 acc-requests 0]
       (let [requests (sp/take! threads-chan)]
         (if (= threads-done 30)
