@@ -11,6 +11,9 @@
     [org.apache.http.impl.client HttpClientBuilder])
   (:gen-class))
 
+(timbre/set-min-level! :error)
+(timbre/set-ns-min-level! :info)
+
 (def word-chan (sp/chan :buf 35))
 (def threads-chan (sp/chan))
 (def matches (atom []))
@@ -20,10 +23,8 @@
            (if (empty? words)
              (do
                (sp/close! word-chan)
-               (timbre/info "fin")
                nil)
              (do
-               (comment timbre/info "sending data")
                (sp/put! word-chan (first words))
                (recur (rest words))))))
 
@@ -110,7 +111,7 @@
         (if (= threads-done 30)
           (do
             (timbre/debug (str "thread finished: " threads-done  " requests: " requests ))
-            (timbre/info (str "threads spawned: " threads-done  " total requests: " requests ))
+            (timbre/info (str "threads spawned: " threads-done  " total requests: " (+ acc-requests requests) ))
             threads-done)
           (do
             (timbre/debug (str "thread finished: " threads-done  " requests: " requests ))
