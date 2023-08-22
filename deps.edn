@@ -2,6 +2,8 @@
  {funcool/promesa {:mvn/version "11.0.671"} 
   clj-http/clj-http {:mvn/version "3.12.3"} 
   com.taoensso/timbre {:mvn/version "6.2.2"}
+  com.fzakaria/slf4j-timbre {:mvn/version "0.4.0"}
+  org.slf4j/jcl-over-slf4j {:mvn/version "1.7.36"}
   org.clojure/tools.cli {:mvn/version "1.0.219"}}
 
  :aliases

@@ -11,6 +11,8 @@
     [org.apache.http.impl.client HttpClientBuilder])
   (:gen-class))
 
+(timbre/set-min-level! :error)
+
 (def word-chan (sp/chan :buf 35))
 (def threads-chan (sp/chan))
 (def matches (atom []))
@@ -20,10 +22,8 @@
            (if (empty? words)
              (do
                (sp/close! word-chan)
-               (timbre/info "fin")
                nil)
              (do
-               (comment timbre/info "sending data")
                (sp/put! word-chan (first words))
                (recur (rest words))))))
 
@@ -60,6 +60,10 @@
                    :validate [#(str/starts-with? % "http") "http(s):// protocol missing"]]
                   ["-w" "--wordlist WORDLIST" "wordlist file path"
                    :validate [#(.exists (io/file %)) "can't find wordlist"]]
+                  ["-v" nil "Verbosity level"
+                   :id :verbosity
+                   :default 0
+                   :update-fn inc]
                   [nil "--match-codes HTTP CODES" "match http response code list separated by comma"
                    :default [200 204 301 302 307 401 403 405 500]
                    :parse-fn parse-mc
@@ -72,6 +76,11 @@
                                      (str "invalid http response code(s): ")))]
                    ]
                   ["-h" "--help" "prints help"]])
+
+(defn adjust-verbosity [{:keys [verbosity]}]
+  (if (> verbosity 0)
+    (timbre/set-ns-min-level! :debug)
+    (timbre/set-ns-min-level! :info)))
 
 (defn validate-args [args]
   (let [{:keys [options summary errors]} (parse-opts args cli-options)]
@@ -89,7 +98,8 @@
       {:exit-message "missing FUZZ" :ok? false}
       
       :else
-      {:options options})))
+      (do (adjust-verbosity options) 
+          {:options options}))))
 
 (defn exit [status msg]
   (println msg)
@@ -110,7 +120,7 @@
         (if (= threads-done 30)
           (do
             (timbre/debug (str "thread finished: " threads-done  " requests: " requests ))
-            (timbre/info (str "threads spawned: " threads-done  " total requests: " requests ))
+            (timbre/info (str "threads spawned: " threads-done  " total requests: " (+ acc-requests requests) ))
             threads-done)
           (do
             (timbre/debug (str "thread finished: " threads-done  " requests: " requests ))
