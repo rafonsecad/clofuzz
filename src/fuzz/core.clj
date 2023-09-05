@@ -27,25 +27,36 @@
                (sp/put! word-chan (first words))
                (recur (rest words))))))
 
-(defn mk-request [base-url word]
+(defn fuzz->word [word base-url header]
+  (let [header-fuzz
+        (update-vals header #(str/replace % #"FUZZ" word))
+        
+        url-fuzz
+        (str/replace base-url #"FUZZ" word)]
+    {:base-url url-fuzz
+     :headers header-fuzz}))
+
+(defn mk-request [base-url word header]
   (try 
-    (-> (str/replace base-url #"FUZZ" word)
-        (client/get {:throw-exceptions false
-                     :http-builder-fns [(fn [^HttpClientBuilder builder _]
-                                          (.disableAutomaticRetries builder))]}))
+    (let [fuzz-params (fuzz->word word base-url header)]
+      (client/get (:base-url fuzz-params) 
+                  {:throw-exceptions false
+                   :headers (:headers fuzz-params)
+                   :http-builder-fns [(fn [^HttpClientBuilder builder _]
+                                        (.disableAutomaticRetries builder))]}))
     (catch Exception e
-      (timbre/info (str "error connecting to server " (.getMessage e) " for word " word)))))
+      (timbre/debug (str "error connecting to server " (.getLocalizedMessage e) " for word " word)))))
 
 (defn validate [{:keys [status]} status-list word]
   (when (.contains status-list status)
     (timbre/info {:status status :word word})
     (swap! matches conj {:status status :word word})))
 
-(defn receive [base-url code-list]
+(defn receive [base-url code-list header]
   (sp/go-loop [requests 0]
               (if-let [word (sp/take! word-chan)]
                 (do 
-                  (-> (mk-request base-url word)
+                  (-> (mk-request base-url word header)
                       (validate code-list word))
                   (recur (inc requests)))
                 (do 
@@ -60,6 +71,11 @@
                    :validate [#(str/starts-with? % "http") "http(s):// protocol missing"]]
                   ["-w" "--wordlist WORDLIST" "wordlist file path"
                    :validate [#(.exists (io/file %)) "can't find wordlist"]]
+                  [nil "--header Header" "Add http header, ex. --header \"Host: FUZZ.domain.org\""
+                   :default {}
+                   :parse-fn #(apply hash-map (str/split % #": "))
+                   :update-fn merge
+                   :multi true]
                   ["-v" nil "Verbosity level"
                    :id :verbosity
                    :default 0
@@ -73,8 +89,7 @@
                               (fn [v] 
                                 (->> (filter #(not (< 100 % 600)) v)
                                      (str/join ",") 
-                                     (str "invalid http response code(s): ")))]
-                   ]
+                                     (str "invalid http response code(s): ")))]]
                   ["-h" "--help" "prints help"]])
 
 (defn adjust-verbosity [{:keys [verbosity]}]
@@ -92,20 +107,28 @@
       {:exit-message errors :ok? false}
 
       (not (set/subset? #{:wordlist :url} (set (keys options))))
-      {:exit-message "missing wordlist or url" :ok? false}
+      {:exit-message "wordlist and url are required" :ok? false}
       
-      (not (str/includes? (:url options) "FUZZ"))
+      (not (or (str/includes? (:url options) "FUZZ")
+               (seq (filter #(str/includes? % "FUZZ") (vals (:header options))))))
       {:exit-message "missing FUZZ" :ok? false}
       
       :else
       (do (adjust-verbosity options) 
           {:options options}))))
+;;
+;(validate-args ["--header" "Host: lol.com" "--header" "Cookie: FUZZ" "-u" "http://lol.com" "-w" "/home/rfonseca/Descargas/lol.txt"])
+;(client/get "http://127.0.0.1" {:headers {"Host" "blog.localhost.com"}})
+;(get (hash-map "key" "value") "key" )
+;(seq (filter #(str/includes? % "FUZZ") (vals {"1" "val1FUzZ" "2" "val2" "3" "lol"})))
+;;
+
 
 (defn exit [status msg]
   (println msg)
   (System/exit status))
 
-(defn start-scan [{:keys [wordlist url match-codes]}]
+(defn start-scan [{:keys [wordlist url match-codes header]}]
   (let [_
         (timbre/info "starting")
 
@@ -114,7 +137,7 @@
 
         _
         (doseq [_ (range 30)] 
-          (receive url match-codes))]
+          (receive url match-codes header))]
     (loop [threads-done 1 acc-requests 0]
       (let [requests (sp/take! threads-chan)]
         (if (= threads-done 30)
