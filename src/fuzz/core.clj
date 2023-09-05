@@ -47,9 +47,9 @@
     (catch Exception e
       (timbre/debug (str "error connecting to server " (.getLocalizedMessage e) " for word " word)))))
 
-(defn validate [{:keys [status]} status-list word]
+(defn validate [{:keys [status length]} status-list word]
   (when (.contains status-list status)
-    (timbre/info {:status status :word word})
+    (timbre/info {:status status :word word :length length})
     (swap! matches conj {:status status :word word})))
 
 (defn receive [base-url code-list header]
