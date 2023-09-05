@@ -116,13 +116,6 @@
       :else
       (do (adjust-verbosity options) 
           {:options options}))))
-;;
-;(validate-args ["--header" "Host: lol.com" "--header" "Cookie: FUZZ" "-u" "http://lol.com" "-w" "/home/rfonseca/Descargas/lol.txt"])
-;(client/get "http://127.0.0.1" {:headers {"Host" "blog.localhost.com"}})
-;(get (hash-map "key" "value") "key" )
-;(seq (filter #(str/includes? % "FUZZ") (vals {"1" "val1FUzZ" "2" "val2" "3" "lol"})))
-;;
-
 
 (defn exit [status msg]
   (println msg)
