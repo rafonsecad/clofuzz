@@ -6,11 +6,10 @@
   org.slf4j/jcl-over-slf4j {:mvn/version "1.7.36"}
   org.clojure/tools.cli {:mvn/version "1.0.219"}}
 
- :aliases
- {:virtual {:main-opts ["-m" "fuzz.core"] 
-            :jvm-opts [ "--enable-preview" "--add-modules" "jdk.incubator.concurrent"]}
+ :paths ["src"]
 
-  :uberjar {:replace-deps {com.github.seancorfield/depstar {:mvn/version "2.1.303"}}
-            :jvm-opts [ "--enable-preview" "--add-modules" "jdk.incubator.concurrent"]
-            :exec-fn hf.depstar/uberjar
-            :exec-args {:aot true}}}}
+ :aliases
+ {:run {:main-opts ["-m" "fuzz.core"]}
+
+  :build {:deps {io.github.clojure/tools.build  {:git/tag "v0.9.5" :git/sha "24f2894"}}
+            :ns-default build}}}
