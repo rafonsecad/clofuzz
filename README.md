@@ -1,17 +1,22 @@
 # Clofuzz
 
-- requirements: Java version >= 20
+- requirements: Java version >= 21
 
 ## build
 
-build a uberjar with the following command
+build an uberjar with the following command
 
 ```
-clojure -X:uberjar :jar clofuzz.jar :main-class fuzz.core
+clojure -T:build uber 
+```
+and then run the jar file
+
+```
+java -jar target/clofuzz-0.0.xx.jar -h
 ```
 
 or run direclty with clj as
 
 ```
-clj -M:virtual
+clj -M:run -h
 ```
