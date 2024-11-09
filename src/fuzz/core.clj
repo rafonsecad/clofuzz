@@ -36,27 +36,37 @@
     {:base-url url-fuzz
      :headers header-fuzz}))
 
-(defn mk-request [base-url word header]
+(defn mk-request [base-url word header follow-redirects?]
   (try 
     (let [fuzz-params (fuzz->word word base-url header)]
       (client/get (:base-url fuzz-params) 
                   {:throw-exceptions false
                    :headers (:headers fuzz-params)
+                   :redirect-strategy (if follow-redirects? :default :none)
                    :http-builder-fns [(fn [^HttpClientBuilder builder _]
                                         (.disableAutomaticRetries builder))]}))
     (catch Exception e
       (timbre/debug (str "error connecting to server " (.getLocalizedMessage e) " for word " word)))))
 
-(defn validate [{:keys [status length]} status-list word]
+(defn validate [{:keys [status length headers trace-redirects], :as all} status-list word]
   (when (.contains status-list status)
-    (timbre/info {:status status :word word :length length})
+    (timbre/info 
+      (cond
+        (seq trace-redirects)
+        {:status status :word word :length length :redirections trace-redirects}
+
+        (= (int (/ status 100)) 3) 
+        {:status status :word word :length length :location (get headers "Location")}
+
+        :else
+        {:status status :word word :length length}) )
     (swap! matches conj {:status status :word word})))
 
-(defn receive [base-url code-list header]
+(defn receive [base-url code-list header follow-redirects?]
   (sp/go-loop [requests 0]
               (if-let [word (sp/take! word-chan)]
                 (do 
-                  (-> (mk-request base-url word header)
+                  (-> (mk-request base-url word header follow-redirects?)
                       (validate code-list word))
                   (recur (inc requests)))
                 (do 
@@ -90,6 +100,7 @@
                                 (->> (filter #(not (< 100 % 600)) v)
                                      (str/join ",") 
                                      (str "invalid http response code(s): ")))]]
+                  [nil "--follow-redirects" "follow redirects, disabled by default" :default false]
                   ["-h" "--help" "prints help"]])
 
 (defn adjust-verbosity [{:keys [verbosity]}]
@@ -121,7 +132,7 @@
   (println msg)
   (System/exit status))
 
-(defn start-scan [{:keys [wordlist url match-codes header]}]
+(defn start-scan [{:keys [wordlist url match-codes header follow-redirects]}]
   (let [_
         (timbre/info "starting")
 
@@ -130,7 +141,7 @@
 
         _
         (doseq [_ (range 30)] 
-          (receive url match-codes header))]
+          (receive url match-codes header follow-redirects))]
     (loop [threads-done 1 acc-requests 0]
       (let [requests (sp/take! threads-chan)]
         (if (= threads-done 30)
