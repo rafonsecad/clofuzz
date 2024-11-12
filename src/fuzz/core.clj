@@ -48,19 +48,27 @@
     (catch Exception e
       (timbre/debug (str "error connecting to server " (.getLocalizedMessage e) " for word " word)))))
 
-(defn validate [{:keys [status length headers trace-redirects], :as all} status-list word]
+(defn process-match [{:keys [status length headers body trace-redirects]} word]
+  (let [actual-length
+        (if (= length -1)
+          (count body)
+          length)] 
+    (cond
+      (seq trace-redirects)
+      {:status status :word word :length actual-length :redirections trace-redirects}
+
+      (= (int (/ status 100)) 3) 
+      {:status status :word word :length actual-length :location (get headers "Location")}
+
+      :else
+      {:status status :word word :length actual-length})) )
+
+(defn validate [{:keys [status] :as response} status-list word]
   (when (.contains status-list status)
-    (timbre/info 
-      (cond
-        (seq trace-redirects)
-        {:status status :word word :length length :redirections trace-redirects}
-
-        (= (int (/ status 100)) 3) 
-        {:status status :word word :length length :location (get headers "Location")}
-
-        :else
-        {:status status :word word :length length}) )
-    (swap! matches conj {:status status :word word})))
+    (let [match
+          (process-match response word)] 
+      (timbre/info  match)
+      (swap! matches conj match))))
 
 (defn receive [base-url code-list header follow-redirects?]
   (sp/go-loop [requests 0]
