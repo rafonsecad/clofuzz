@@ -20,3 +20,9 @@ or run direclty with clj as
 ```
 clj -M:run -h
 ```
+
+## run tests
+
+```
+clj -X:test
+```
