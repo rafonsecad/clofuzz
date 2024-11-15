@@ -1,5 +1,6 @@
 (ns fuzz.core
   (:require 
+    [fuzz.terminal :as t]
     [clojure.string :as str]
     [clojure.java.io :as io]
     [clojure.set :as set]
@@ -11,7 +12,7 @@
     [org.apache.http.impl.client HttpClientBuilder])
   (:gen-class))
 
-(timbre/set-min-level! :error)
+(timbre/set-min-level! :info)
 
 (def word-chan (sp/chan :buf 35))
 (def threads-chan (sp/chan))
@@ -63,19 +64,19 @@
       :else
       {:status status :word word :length actual-length})) )
 
-(defn validate [{:keys [status] :as response} status-list word]
+(defn validate [{:keys [status] :as response} status-list word terminal]
   (when (.contains status-list status)
     (let [match
           (process-match response word)] 
-      (timbre/info  match)
+      (t/log terminal match)
       (swap! matches conj match))))
 
-(defn receive [base-url code-list header follow-redirects?]
+(defn receive [terminal base-url code-list header follow-redirects?]
   (sp/go-loop [requests 0]
               (if-let [word (sp/take! word-chan)]
                 (do 
                   (-> (mk-request base-url word header follow-redirects?)
-                      (validate code-list word))
+                      (validate code-list word terminal))
                   (recur (inc requests)))
                 (do 
                   (sp/put! threads-chan requests)
@@ -140,29 +141,35 @@
   (println msg)
   (System/exit status))
 
-(defn start-scan [{:keys [wordlist url match-codes header follow-redirects]}]
+(defn start-scan [ {:keys [terminal]} {:keys [wordlist url match-codes header follow-redirects]}]
   (let [_
-        (timbre/info "starting")
+        (t/handle terminal)
+
+        _
+        (t/log terminal "starting")
 
         _
         (send-words (str/split (slurp wordlist) #"\n"))
-
+        
         _
         (doseq [_ (range 30)] 
-          (receive url match-codes header follow-redirects))]
+          (receive terminal url match-codes header follow-redirects))]
     (loop [threads-done 1 acc-requests 0]
       (let [requests (sp/take! threads-chan)]
         (if (= threads-done 30)
           (do
             (timbre/debug (str "thread finished: " threads-done  " requests: " requests ))
-            (timbre/info (str "threads spawned: " threads-done  " total requests: " (+ acc-requests requests) ))
+            (t/log terminal (str "threads spawned: " threads-done  " total requests: " (+ acc-requests requests) ))
+            (t/stop terminal)
             threads-done)
           (do
             (timbre/debug (str "thread finished: " threads-done  " requests: " requests ))
             (recur (inc threads-done) (+ acc-requests requests))))))))
 
+(def system {:terminal t/StandardTerminal})
+
 (defn -main [& args]
   (let [{:keys [exit-message ok? options]} (validate-args args)] 
     (if exit-message
       (exit (if ok? 0 1) exit-message)
-      (start-scan options))))
+      (start-scan system options))))
