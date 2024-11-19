@@ -1,6 +1,7 @@
 (ns fuzz.terminal
   (:require [promesa.exec.csp :as sp]
-            [taoensso.timbre :as timbre]))
+            [taoensso.timbre :as timbre]
+            [clojure.string :as str]))
 
 (defprotocol TerminalProtocol
   (handle [_])
@@ -10,21 +11,27 @@
 
 
 (def ^:private output-chan (sp/chan))
-(def ^:private progress-bar (atom {:percentage 0}))
+(def ^:private progress-bar (atom {:percentage 0 :requests 0}))
+(def ^:private bar-length 20)
 
-(defn refresh-bar []
-  ;(dotimes [_ 2] (println ""))
-  ;(print (str (char 27) "[1E"))
-  ;(flush)
+(defn draw-bar [percentage]
+  (let [boxes
+        (int (* (/ percentage 100) bar-length))
+        
+        boxes-str
+        (str/join (repeat boxes "\u2593"))
+        
+        space-str
+        (str/join (repeat (- bar-length boxes) "\u2591"))
+        
+        bar
+        ( str "\u2595" boxes-str space-str) ]
+    (println bar (:percentage @progress-bar) "% - Requests made: " (:requests @progress-bar))))
+
+(defn draw-panel []
   (println (str (char 27) "[0J"))
   (println)
-  (println "[                  ]" (:percentage @progress-bar) "%")
-  (print (str (char 27) "[3F")))
-
-(defn draw [stats]
-  (println (str (char 27) "[0J"))
-  (println)
-  (println "[                  ]" (:percentage @progress-bar) "%")
+  (draw-bar (:percentage @progress-bar))
   (print (str (char 27) "[3F")))
 
 (defn- handle-output []
@@ -33,20 +40,17 @@
                 (cond (= cmd :log)
                       (do 
                         (println text)
-                        (refresh-bar)
+                        (draw-panel)
                         (recur))
 
                       (= cmd :stats)
                       (do
-                        (swap! progress-bar assoc :percentage (int (* (/ (:processed-words text) (:total text)) 100)))
-                        ;(refresh-bar)
-                        (draw text)
+                        (swap! progress-bar assoc :percentage (int (* (/ (:processed-words text) (:total text)) 100)) :requests (:processed-words text))
+                        (draw-panel)
                         (recur))
 
                       (= cmd :stop)
                       (do (sp/close! output-chan)
-                          ;(print (str (char 27) "[5B"))
-                          ;(flush)
                           (println)
                           (println)
                           (println)

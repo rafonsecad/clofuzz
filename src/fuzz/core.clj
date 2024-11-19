@@ -37,7 +37,10 @@
                   (t/send-stats terminal @stats)
                   (Thread/sleep 100)
                   (recur))
-                nil)))
+                (do
+                  (t/send-stats terminal @stats)
+                  (sp/put! threads-chan 0)
+                  nil))))
 
 (defn fuzz->word [word base-url header]
   (let [header-fuzz
@@ -157,12 +160,8 @@
   (let [_
         (t/handle terminal)
 
-        ;_
-        ;(t/log terminal "starting")
-
         _
         (send-words (str/split (slurp wordlist) #"\n"))
-        
 
         _
         (monitor terminal)
@@ -172,10 +171,10 @@
           (process-words terminal url match-codes header follow-redirects))]
     (loop [threads-done 1 acc-requests 0]
       (let [requests (sp/take! threads-chan)]
-        (if (= threads-done 30)
+        (if (= threads-done 31)
           (do
             ;(timbre/debug (str "thread finished: " threads-done  " requests: " requests ))
-            (t/log terminal (str "threads spawned: " threads-done  " total requests: " (+ acc-requests requests) ))
+            (t/log terminal (str "threads spawned: " (dec threads-done)  " total requests: " (+ acc-requests requests) ))
             (t/stop terminal)
             threads-done)
           (do
