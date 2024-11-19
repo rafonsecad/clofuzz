@@ -1,7 +1,14 @@
 (ns fuzz.fuzz-test
   (:require [clojure.test :refer :all]
             [fuzz.core :as fuzz]
+            [fuzz.terminal :as fuzz-t]
             [ring.adapter.jetty :as jetty]))
+
+(def MockTerminal 
+  (reify fuzz-t/TerminalProtocol
+    (handle [_])
+    (log [_ msg])
+    (stop [_])))
 
 (defn ok-handler [request]
   (case (:uri request)
@@ -42,7 +49,7 @@
            (fuzz/mk-request (:url-fuzz mock-server) "ok" {} false)
 
            _
-           (fuzz/validate request [200] "ok")
+           (fuzz/validate-request request [200] "ok" MockTerminal)
 
            _
            (.stop (:server mock-server))]
@@ -61,7 +68,7 @@
            (fuzz/mk-request (:url-fuzz mock-server) "ok-no-content-length" {} false)
 
            _
-           (fuzz/validate request [200] "ok-no-content-length")
+           (fuzz/validate-request request [200] "ok-no-content-length" MockTerminal)
 
            _
            (.stop (:server mock-server))]
@@ -80,7 +87,7 @@
            (fuzz/mk-request (:url-fuzz mock-server) "guess" {} false)
 
            _
-           (fuzz/validate request [200] "guess")
+           (fuzz/validate-request request [200] "guess" MockTerminal)
 
            _
            (.stop (:server mock-server))]
