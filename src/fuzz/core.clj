@@ -12,13 +12,15 @@
     [org.apache.http.impl.client HttpClientBuilder])
   (:gen-class))
 
-(timbre/set-min-level! :info)
+(timbre/set-min-level! :error)
 
 (def word-chan (sp/chan :buf 35))
 (def threads-chan (sp/chan))
 (def matches (atom []))
+(def stats (atom {:total 0 :processed-words 0}))
 
 (defn send-words [queue]
+  (swap! stats assoc :total (count queue))
   (sp/go-loop [words queue]
            (if (empty? words)
              (do
@@ -27,6 +29,15 @@
              (do
                (sp/put! word-chan (first words))
                (recur (rest words))))))
+
+(defn monitor [terminal]
+  (sp/go-loop []
+              (if (not= (:total @stats) (:processed-words @stats))
+                (do 
+                  (t/send-stats terminal @stats)
+                  (Thread/sleep 100)
+                  (recur))
+                nil)))
 
 (defn fuzz->word [word base-url header]
   (let [header-fuzz
@@ -64,19 +75,20 @@
       :else
       {:status status :word word :length actual-length})) )
 
-(defn validate [{:keys [status] :as response} status-list word terminal]
+(defn validate-request [{:keys [status] :as response} status-list word terminal]
   (when (.contains status-list status)
     (let [match
           (process-match response word)] 
       (t/log terminal match)
       (swap! matches conj match))))
 
-(defn receive [terminal base-url code-list header follow-redirects?]
+(defn process-words [terminal base-url code-list header follow-redirects?]
   (sp/go-loop [requests 0]
               (if-let [word (sp/take! word-chan)]
                 (do 
                   (-> (mk-request base-url word header follow-redirects?)
-                      (validate code-list word terminal))
+                      (validate-request code-list word terminal))
+                  (swap! stats update :processed-words inc)
                   (recur (inc requests)))
                 (do 
                   (sp/put! threads-chan requests)
@@ -145,25 +157,29 @@
   (let [_
         (t/handle terminal)
 
-        _
-        (t/log terminal "starting")
+        ;_
+        ;(t/log terminal "starting")
 
         _
         (send-words (str/split (slurp wordlist) #"\n"))
         
+
+        _
+        (monitor terminal)
+
         _
         (doseq [_ (range 30)] 
-          (receive terminal url match-codes header follow-redirects))]
+          (process-words terminal url match-codes header follow-redirects))]
     (loop [threads-done 1 acc-requests 0]
       (let [requests (sp/take! threads-chan)]
         (if (= threads-done 30)
           (do
-            (timbre/debug (str "thread finished: " threads-done  " requests: " requests ))
+            ;(timbre/debug (str "thread finished: " threads-done  " requests: " requests ))
             (t/log terminal (str "threads spawned: " threads-done  " total requests: " (+ acc-requests requests) ))
             (t/stop terminal)
             threads-done)
           (do
-            (timbre/debug (str "thread finished: " threads-done  " requests: " requests ))
+            ;(timbre/debug (str "thread finished: " threads-done  " requests: " requests ))
             (recur (inc threads-done) (+ acc-requests requests))))))))
 
 (def system {:terminal t/StandardTerminal})

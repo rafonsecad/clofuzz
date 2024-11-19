@@ -49,7 +49,7 @@
            (fuzz/mk-request (:url-fuzz mock-server) "ok" {} false)
 
            _
-           (fuzz/validate request [200] "ok" MockTerminal)
+           (fuzz/validate-request request [200] "ok" MockTerminal)
 
            _
            (.stop (:server mock-server))]
@@ -68,7 +68,7 @@
            (fuzz/mk-request (:url-fuzz mock-server) "ok-no-content-length" {} false)
 
            _
-           (fuzz/validate request [200] "ok-no-content-length" MockTerminal)
+           (fuzz/validate-request request [200] "ok-no-content-length" MockTerminal)
 
            _
            (.stop (:server mock-server))]
@@ -87,7 +87,7 @@
            (fuzz/mk-request (:url-fuzz mock-server) "guess" {} false)
 
            _
-           (fuzz/validate request [200] "guess" MockTerminal)
+           (fuzz/validate-request request [200] "guess" MockTerminal)
 
            _
            (.stop (:server mock-server))]
