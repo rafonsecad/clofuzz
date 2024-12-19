@@ -37,8 +37,8 @@
      :server server
      :url-fuzz url-fuzz}))
 
-(deftest ok-test
-  (testing "Test OK response at path /ok"
+(deftest filter-by-status-code-test
+  (testing "OK response at path /ok: one match for status code 200"
     (let  [_
            (reset! fuzz/matches [])
            
@@ -49,34 +49,14 @@
            (fuzz/mk-request (:url-fuzz mock-server) "ok" {} false)
 
            _
-           (fuzz/validate-request request [200] "ok" MockTerminal)
+           (fuzz/validate-request request [200] [] "ok" MockTerminal)
 
            _
            (.stop (:server mock-server))]
      (is (= (:status request) 200))
-     (is (= @fuzz/matches [{:status 200 :word "ok" :length 2}])))))
+     (is (= @fuzz/matches [{:status 200 :word "ok" :length 2}]))))
 
-(deftest ok-no-content-length-test
-  (testing "Test OK response at path /ok-no-content-length"
-    (let  [_
-           (reset! fuzz/matches [])
-           
-           mock-server 
-           (start-mock-server ok-handler)
-
-           request
-           (fuzz/mk-request (:url-fuzz mock-server) "ok-no-content-length" {} false)
-
-           _
-           (fuzz/validate-request request [200] "ok-no-content-length" MockTerminal)
-
-           _
-           (.stop (:server mock-server))]
-     (is (= (:status request) 200))
-     (is (= @fuzz/matches [{:status 200 :word "ok-no-content-length" :length 2}])))))
-
-(deftest not-found-test
-  (testing "Test NOT FOUND response at path /guess"
+  (testing "NOT FOUND response at path /guess: no matches for 200 status code"
     (let  [_
            (reset! fuzz/matches [])
 
@@ -87,11 +67,49 @@
            (fuzz/mk-request (:url-fuzz mock-server) "guess" {} false)
 
            _
-           (fuzz/validate-request request [200] "guess" MockTerminal)
+           (fuzz/validate-request request [200] [] "guess" MockTerminal)
 
            _
            (.stop (:server mock-server))]
       (is (= (:status request) 404))
       (is (= @fuzz/matches [])))))
 
-;(run-tests)
+(deftest no-content-length-response-test
+  (testing "OK response at path /ok-no-content-length: one match with content-length of 2"
+    (let  [_
+           (reset! fuzz/matches [])
+           
+           mock-server 
+           (start-mock-server ok-handler)
+
+           request
+           (fuzz/mk-request (:url-fuzz mock-server) "ok-no-content-length" {} false)
+
+           _
+           (fuzz/validate-request request [200] [] "ok-no-content-length" MockTerminal)
+
+           _
+           (.stop (:server mock-server))]
+     (is (= (:status request) 200))
+     (is (= @fuzz/matches [{:status 200 :word "ok-no-content-length" :length 2}])))))
+
+(deftest filter-out-by-content-length
+  (testing "filter out content-length of 9 at path /guess: no matches found"
+    (let  [_
+           (reset! fuzz/matches [])
+           
+           mock-server 
+           (start-mock-server ok-handler)
+
+           request
+           (fuzz/mk-request (:url-fuzz mock-server) "guess" {} false)
+
+           _
+           (fuzz/validate-request request [404] [9] "guess" MockTerminal)
+
+           _
+           (.stop (:server mock-server))]
+     (is (= (:status request) 404))
+     (is (= @fuzz/matches [])))))  
+
+(run-tests)

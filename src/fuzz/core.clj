@@ -63,34 +63,36 @@
     (catch Exception e
       (timbre/debug (str "error connecting to server " (.getLocalizedMessage e) " for word " word)))))
 
-(defn process-match [{:keys [status length headers body trace-redirects]} word]
-  (let [actual-length
-        (if (= length -1)
+(defn process-match [{:keys [status  headers  trace-redirects]} actual-length word]
+  (cond
+    (seq trace-redirects)
+    {:status status :word word :length actual-length :redirections trace-redirects}
+
+    (= (int (/ status 100)) 3) 
+    {:status status :word word :length actual-length :location (get headers "Location")}
+
+    :else
+    {:status status :word word :length actual-length}) )
+
+(defn actual-length [{:keys [body length]}]
+  (if (= length -1)
           (count body)
-          length)] 
-    (cond
-      (seq trace-redirects)
-      {:status status :word word :length actual-length :redirections trace-redirects}
+          length))
 
-      (= (int (/ status 100)) 3) 
-      {:status status :word word :length actual-length :location (get headers "Location")}
-
-      :else
-      {:status status :word word :length actual-length})) )
-
-(defn validate-request [{:keys [status] :as response} status-list word terminal]
-  (when (.contains status-list status)
+(defn validate-request [{:keys [status] :as response} status-list length-ex word terminal]
+  (when (and (.contains status-list status)
+             (not (.contains length-ex (actual-length response))))
     (let [match
-          (process-match response word)] 
+          (process-match response (actual-length response) word)] 
       (t/log terminal match)
       (swap! matches conj match))))
 
-(defn process-words [terminal base-url code-list header follow-redirects?]
+(defn process-words [terminal base-url code-list header filter-lengths follow-redirects?]
   (sp/go-loop [requests 0]
               (if-let [word (sp/take! word-chan)]
                 (do 
                   (-> (mk-request base-url word header follow-redirects?)
-                      (validate-request code-list word terminal))
+                      (validate-request code-list filter-lengths word terminal))
                   (swap! stats update :processed-words inc)
                   (recur (inc requests)))
                 (do 
@@ -124,6 +126,9 @@
                                 (->> (filter #(not (< 100 % 600)) v)
                                      (str/join ",") 
                                      (str "invalid http response code(s): ")))]]
+                  [nil "--filter-lengths LENGTHS" "exclude content length list separated by comma"
+                   :default []
+                   :parse-fn parse-mc]
                   [nil "--follow-redirects" "follow redirects, disabled by default" :default false]
                   ["-h" "--help" "prints help"]])
 
@@ -156,7 +161,7 @@
   (println msg)
   (System/exit status))
 
-(defn start-scan [ {:keys [terminal]} {:keys [wordlist url match-codes header follow-redirects]}]
+(defn start-scan [ {:keys [terminal]} {:keys [wordlist url match-codes header filter-lengths follow-redirects]}]
   (let [_
         (t/handle terminal)
 
@@ -168,7 +173,7 @@
 
         _
         (doseq [_ (range 30)] 
-          (process-words terminal url match-codes header follow-redirects))]
+          (process-words terminal url match-codes header filter-lengths follow-redirects))]
     (loop [threads-done 1 acc-requests 0]
       (let [requests (sp/take! threads-chan)]
         (if (= threads-done 31)
