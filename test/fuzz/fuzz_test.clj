@@ -51,7 +51,7 @@
            (start-mock-server ok-handler)
 
            request
-           (fuzz/mk-request (:url-fuzz mock-server) "ok" :get {} false)
+           (fuzz/mk-request (:url-fuzz mock-server) "ok" "GET" {} false)
 
            _
            (fuzz/validate-request request [200] [] "ok" MockTerminal)
@@ -69,7 +69,7 @@
            (start-mock-server ok-handler)
 
            request
-           (fuzz/mk-request (:url-fuzz mock-server) "guess" :get {} false)
+           (fuzz/mk-request (:url-fuzz mock-server) "guess" "GET" {} false)
 
            _
            (fuzz/validate-request request [200] [] "guess" MockTerminal)
@@ -88,7 +88,7 @@
            (start-mock-server ok-handler)
 
            request
-           (fuzz/mk-request (:url-fuzz mock-server) "ok-no-content-length" :get {} false)
+           (fuzz/mk-request (:url-fuzz mock-server) "ok-no-content-length" "GET" {} false)
 
            _
            (fuzz/validate-request request [200] [] "ok-no-content-length" MockTerminal)
@@ -107,7 +107,7 @@
            (start-mock-server ok-handler)
 
            request
-           (fuzz/mk-request (:url-fuzz mock-server) "guess" :get {} false)
+           (fuzz/mk-request (:url-fuzz mock-server) "guess" "GET" {} false)
 
            _
            (fuzz/validate-request request [404] [9] "guess" MockTerminal)
@@ -126,7 +126,7 @@
            (start-mock-server post-handler)
 
            request
-           (fuzz/mk-request (:url-fuzz mock-server) "ok" :post {} false)
+           (fuzz/mk-request (:url-fuzz mock-server) "ok" "POST" {} false)
 
            _
            (fuzz/validate-request request [200] [] "ok" MockTerminal)
@@ -144,7 +144,7 @@
            (start-mock-server post-handler)
 
            request
-           (fuzz/mk-request (:url-fuzz mock-server) "ok" :get {} false)
+           (fuzz/mk-request (:url-fuzz mock-server) "ok" "GET" {} false)
 
            _
            (fuzz/validate-request request [200] [] "ok" MockTerminal)
