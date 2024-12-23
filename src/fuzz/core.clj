@@ -51,15 +51,17 @@
     {:base-url url-fuzz
      :headers header-fuzz}))
 
-(defn mk-request [base-url word header follow-redirects?]
+(defn mk-request [base-url word method header follow-redirects?]
   (try 
     (let [fuzz-params (fuzz->word word base-url header)]
-      (client/get (:base-url fuzz-params) 
-                  {:throw-exceptions false
-                   :headers (:headers fuzz-params)
-                   :redirect-strategy (if follow-redirects? :default :none)
-                   :http-builder-fns [(fn [^HttpClientBuilder builder _]
-                                        (.disableAutomaticRetries builder))]}))
+      (client/request 
+        {:method method 
+         :url (:base-url fuzz-params) 
+         :throw-exceptions false
+         :headers (:headers fuzz-params)
+         :redirect-strategy (if follow-redirects? :default :none)
+         :http-builder-fns [(fn [^HttpClientBuilder builder _]
+                              (.disableAutomaticRetries builder))]}))
     (catch Exception e
       (timbre/debug (str "error connecting to server " (.getLocalizedMessage e) " for word " word)))))
 
@@ -87,11 +89,11 @@
       (t/log terminal match)
       (swap! matches conj match))))
 
-(defn process-words [terminal base-url code-list header filter-lengths follow-redirects?]
+(defn process-words [terminal base-url code-list header method filter-lengths follow-redirects?]
   (sp/go-loop [requests 0]
               (if-let [word (sp/take! word-chan)]
                 (do 
-                  (-> (mk-request base-url word header follow-redirects?)
+                  (-> (mk-request base-url word method header follow-redirects?)
                       (validate-request code-list filter-lengths word terminal))
                   (swap! stats update :processed-words inc)
                   (recur (inc requests)))
@@ -116,6 +118,8 @@
                    :id :verbosity
                    :default 0
                    :update-fn inc]
+                  [nil "--method METHOD" "HTTP method"
+                   :default "GET"]
                   [nil "--match-codes HTTP CODES" "match http response code list separated by comma"
                    :default [200 204 301 302 307 401 403 405 500]
                    :parse-fn parse-mc
@@ -161,7 +165,7 @@
   (println msg)
   (System/exit status))
 
-(defn start-scan [ {:keys [terminal]} {:keys [wordlist url match-codes header filter-lengths follow-redirects]}]
+(defn start-scan [ {:keys [terminal]} {:keys [wordlist url match-codes header method filter-lengths follow-redirects]}]
   (let [_
         (t/handle terminal)
 
@@ -173,7 +177,7 @@
 
         _
         (doseq [_ (range 30)] 
-          (process-words terminal url match-codes header filter-lengths follow-redirects))]
+          (process-words terminal url match-codes header method filter-lengths follow-redirects))]
     (loop [threads-done 1 acc-requests 0]
       (let [requests (sp/take! threads-chan)]
         (if (= threads-done 31)
