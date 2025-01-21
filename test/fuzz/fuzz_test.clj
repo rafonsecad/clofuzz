@@ -54,7 +54,7 @@
            (fuzz/mk-request (:url-fuzz mock-server) "ok" "GET" {} false)
 
            _
-           (fuzz/validate-request request [200] [] "ok" MockTerminal)
+           (fuzz/validate-request request [200] [] [] "ok" MockTerminal)
 
            _
            (.stop (:server mock-server))]
@@ -72,7 +72,7 @@
            (fuzz/mk-request (:url-fuzz mock-server) "guess" "GET" {} false)
 
            _
-           (fuzz/validate-request request [200] [] "guess" MockTerminal)
+           (fuzz/validate-request request [200] []  [] "guess" MockTerminal)
 
            _
            (.stop (:server mock-server))]
@@ -91,7 +91,7 @@
            (fuzz/mk-request (:url-fuzz mock-server) "ok-no-content-length" "GET" {} false)
 
            _
-           (fuzz/validate-request request [200] [] "ok-no-content-length" MockTerminal)
+           (fuzz/validate-request request [200] [] [] "ok-no-content-length" MockTerminal)
 
            _
            (.stop (:server mock-server))]
@@ -110,7 +110,7 @@
            (fuzz/mk-request (:url-fuzz mock-server) "guess" "GET" {} false)
 
            _
-           (fuzz/validate-request request [404] [9] "guess" MockTerminal)
+           (fuzz/validate-request request [404] [] [9] "guess" MockTerminal)
 
            _
            (.stop (:server mock-server))]
@@ -129,7 +129,7 @@
            (fuzz/mk-request (:url-fuzz mock-server) "ok" "POST" {} false)
 
            _
-           (fuzz/validate-request request [200] [] "ok" MockTerminal)
+           (fuzz/validate-request request [200] [] [] "ok" MockTerminal)
 
            _
            (.stop (:server mock-server))]
@@ -147,11 +147,30 @@
            (fuzz/mk-request (:url-fuzz mock-server) "ok" "GET" {} false)
 
            _
-           (fuzz/validate-request request [200] [] "ok" MockTerminal)
+           (fuzz/validate-request request [200] [] [] "ok" MockTerminal)
 
            _
            (.stop (:server mock-server))]
      (is (= (:status request) 404))
      (is (= @fuzz/matches [])))))
 
-;;(run-tests)
+(deftest exlusion-by-status-code-test
+  (testing "OK response at path /ok: exclude status code 200"
+    (let  [_
+           (reset! fuzz/matches [])
+           
+           mock-server 
+           (start-mock-server ok-handler)
+
+           request
+           (fuzz/mk-request (:url-fuzz mock-server) "ok" "GET" {} false)
+
+           _
+           (fuzz/validate-request request [200] [200] [] "ok" MockTerminal)
+
+           _
+           (.stop (:server mock-server))]
+     (is (= (:status request) 200))
+     (is (= @fuzz/matches [])))))
+
+(run-tests)

@@ -81,20 +81,25 @@
           (count body)
           length))
 
-(defn validate-request [{:keys [status] :as response} status-list length-ex word terminal]
-  (when (and (.contains status-list status)
+(defn check-status [status status-list ex-status-list]
+  (if (seq ex-status-list)
+    (not (.contains ex-status-list status))
+    (.contains status-list status)))
+
+(defn validate-request [{:keys [status] :as response} status-list ex-status-list length-ex word terminal]
+  (when (and (check-status status status-list ex-status-list)
              (not (.contains length-ex (actual-length response))))
     (let [match
           (process-match response (actual-length response) word)] 
       (t/log terminal match)
       (swap! matches conj match))))
 
-(defn process-words [terminal base-url code-list header method filter-lengths follow-redirects?]
+(defn process-words [terminal base-url code-list ex-code-list header method filter-lengths follow-redirects?]
   (sp/go-loop [requests 0]
               (if-let [word (sp/take! word-chan)]
                 (do 
                   (-> (mk-request base-url word method header follow-redirects?)
-                      (validate-request code-list filter-lengths word terminal))
+                      (validate-request code-list ex-code-list filter-lengths word terminal))
                   (swap! stats update :processed-words inc)
                   (recur (inc requests)))
                 (do 
@@ -122,6 +127,16 @@
                    :default "GET"]
                   [nil "--match-codes HTTP CODES" "match http response code list separated by comma"
                    :default [200 204 301 302 307 401 403 405 500]
+                   :parse-fn parse-mc
+                   :validate [(fn [v]
+                                (every? #(< 100 % 600) v))
+
+                              (fn [v] 
+                                (->> (filter #(not (< 100 % 600)) v)
+                                     (str/join ",") 
+                                     (str "invalid http response code(s): ")))]]
+                  [nil "--exclude-codes HTTP CODES" "exclude http response code list separated by comma. This option discards --match-codes"
+                   :default []
                    :parse-fn parse-mc
                    :validate [(fn [v]
                                 (every? #(< 100 % 600) v))
@@ -165,7 +180,7 @@
   (println msg)
   (System/exit status))
 
-(defn start-scan [ {:keys [terminal]} {:keys [wordlist url match-codes header method filter-lengths follow-redirects]}]
+(defn start-scan [ {:keys [terminal]} {:keys [wordlist url match-codes exclude-codes header method filter-lengths follow-redirects]}]
   (let [_
         (t/handle terminal)
 
@@ -177,7 +192,7 @@
 
         _
         (doseq [_ (range 30)] 
-          (process-words terminal url match-codes header method filter-lengths follow-redirects))]
+          (process-words terminal url match-codes exclude-codes header method filter-lengths follow-redirects))]
     (loop [threads-done 1 acc-requests 0]
       (let [requests (sp/take! threads-chan)]
         (if (= threads-done 31)
