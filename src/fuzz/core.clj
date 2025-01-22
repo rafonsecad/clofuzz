@@ -12,6 +12,21 @@
     [org.apache.http.impl.client HttpClientBuilder])
   (:gen-class))
 
+(def banner 
+  (str/join "\n"
+            [
+             ""
+             " ▄████████  ▄█        ▄██████▄     ▄████████ ███    █▄   ▄███████▄   ▄███████▄  "
+             "███    ███ ███       ███    ███   ███    ███ ███    ███ ██▀     ▄██ ██▀     ▄██ "
+             "███    █▀  ███       ███    ███   ███    █▀  ███    ███       ▄███▀       ▄███▀ "
+             "███        ███       ███    ███  ▄███▄▄▄     ███    ███  ▀█▀▄███▀▄▄  ▀█▀▄███▀▄▄ "
+             "███        ███       ███    ███ ▀▀███▀▀▀     ███    ███   ▄███▀   ▀   ▄███▀   ▀ "
+             "███    █▄  ███       ███    ███   ███        ███    ███ ▄███▀       ▄███▀      "
+             "███    ███ ███▌    ▄ ███    ███   ███        ███    ███ ███▄     ▄█ ███▄     ▄█"
+             "████████▀  █████▄▄██  ▀██████▀    ███        ████████▀   ▀████████▀  ▀████████▀"
+             "           ▀                                                                    "
+             ""]))
+
 (timbre/set-min-level! :error)
 
 (def word-chan (sp/chan :buf 35))
@@ -160,7 +175,7 @@
   (let [{:keys [options summary errors]} (parse-opts args cli-options)]
     (cond
       (:help options)
-      {:exit-message summary :ok? true}
+      {:exit-message (str banner summary) :ok? true}
 
       (some? errors)
       {:exit-message errors :ok? false}
@@ -182,6 +197,9 @@
 
 (defn start-scan [ {:keys [terminal]} {:keys [wordlist url match-codes exclude-codes header method filter-lengths follow-redirects]}]
   (let [_
+        (println banner)
+        
+        _
         (t/handle terminal)
 
         _
