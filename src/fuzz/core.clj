@@ -32,6 +32,7 @@
 (def word-chan (sp/chan :buf 35))
 (def threads-chan (sp/chan))
 (def matches (atom []))
+(def state (atom {}))
 (def stats (atom {:total 0 :processed-words 0}))
 
 (defn send-words [queue]
@@ -229,4 +230,5 @@
   (let [{:keys [exit-message ok? options]} (validate-args args)] 
     (if exit-message
       (exit (if ok? 0 1) exit-message)
-      (start-scan system options))))
+      (do (swap! state assoc :options options)
+          (start-scan system options)))))

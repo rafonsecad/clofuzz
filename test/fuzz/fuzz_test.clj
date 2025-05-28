@@ -173,4 +173,4 @@
      (is (= (:status request) 200))
      (is (= @fuzz/matches [])))))
 
-(run-tests)
+;(run-tests)
