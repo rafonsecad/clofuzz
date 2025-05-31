@@ -22,7 +22,11 @@
 (defn get-pwd []
   (System/getenv "PWD"))
 
-(defn data->file-edn [state stats])
+(defn data->file-edn [state stats matches]
+  (let [edn (:options state)]
+    (assoc edn :wordlist-hash (:wordlist-hash state))
+    (assoc edn :stats stats)
+    (assoc-in  edn [:stats :matches] matches)))
 
 (def FileBackup
   (reify BackupProtocol
