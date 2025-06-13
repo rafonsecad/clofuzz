@@ -27,6 +27,8 @@
                                                          status INTEGER,
                                                          word VARCHAR(30),
                                                          length INTEGER,
+                                                         location TEXT,
+                                                         redirections TEXT,
                                                          scanning_id INTEGER,
                                                          FOREIGN KEY (scanning_id) REFERENCES scannings (id))"])
 
@@ -39,7 +41,9 @@
     (.toString hash-int 16)))
 
 (defprotocol BackupProtocol
-  (save [_ state stats]))
+  (create-state [_ state stats])
+  (update-state [_ id stats])
+  (save-match [_ id match]))
 
 
 (defn get-home []
@@ -52,21 +56,26 @@
   (jdbc/execute! ds scannings-table)
   (jdbc/execute! ds matches-table))
 
-(defn data->table-edn [state stats matches]
-    [ (-> (:options state)
-          (assoc :id (:id state))
-          (assoc :date (:date state))
-          (assoc :wordlist-hash (:wordlist-hash state))
-          (assoc :total (:total stats))
-          (assoc :processed-words (:processed-words stats)))
-
-     (map #(assoc % :scanning-id (:id state)) matches)])
-
-(defn save-db [state stats matches]
-  (let [[scanning matches-db] (data->table-edn state stats matches)]
-    (sql/insert! ds :scannings scanning jdbc/snake-kebab-opts)
-    (sql/insert-multi! ds :matches matches-db jdbc/snake-kebab-opts)))
-
 (def DataBackup
   (reify BackupProtocol
-    (save [_ state stats] nil)))
+    (create-state [_ state stats]
+      (let [scanning (-> (:options state)
+                         (assoc :id (:id state))
+                         (assoc :date (:date state))
+                         (assoc :wordlist-hash (:wordlist-hash state))
+                         (assoc :total (:total stats))
+                         (assoc :processed-words (:processed-words stats)))]
+        (sql/insert! ds :scannings scanning jdbc/snake-kebab-opts)))
+
+    (update-state [_ id stats]
+      (sql/update! ds 
+                   :scannings
+                   (select-keys stats [:total :processed-words]) 
+                   {:id id} 
+                   jdbc/snake-kebab-opts))
+
+    (save-match [_ id match]
+      (sql/insert! ds
+                   :matches 
+                   (assoc match :scanning-id id) 
+                   jdbc/snake-kebab-opts))))
