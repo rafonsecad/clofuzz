@@ -1,12 +1,14 @@
 (ns fuzz.core
   (:require 
     [fuzz.terminal :as t]
+    [fuzz.backup :as bk]
     [clojure.string :as str]
     [clojure.java.io :as io]
     [clojure.set :as set]
     [clj-http.client :as client]
     [promesa.exec.csp :as sp]
     [taoensso.timbre :as timbre]
+    [java-time.api :as jt]
     [clojure.tools.cli :refer [parse-opts]])
   (:import
     [org.apache.http.impl.client HttpClientBuilder])
@@ -32,7 +34,7 @@
 (def word-chan (sp/chan :buf 35))
 (def threads-chan (sp/chan))
 (def matches (atom []))
-(def state (atom {}))
+(def state (atom {:id (rand-int 20000)}))
 (def stats (atom {:total 0 :processed-words 0}))
 
 (defn send-words [queue]
@@ -46,15 +48,17 @@
                (sp/put! word-chan (first words))
                (recur (rest words))))))
 
-(defn monitor [terminal]
+(defn monitor [terminal backup]
   (sp/go-loop []
               (if (not= (:total @stats) (:processed-words @stats))
                 (do 
                   (t/send-stats terminal @stats)
+                  (bk/update-state backup (:id @state) @stats)
                   (Thread/sleep 100)
                   (recur))
                 (do
                   (t/send-stats terminal @stats)
+                  (bk/update-state backup (:id @state) @stats)
                   (sp/put! threads-chan 0)
                   nil))))
 
@@ -102,20 +106,21 @@
     (not (.contains ex-status-list status))
     (.contains status-list status)))
 
-(defn validate-request [{:keys [status] :as response} status-list ex-status-list length-ex word terminal]
+(defn validate-request [{:keys [status] :as response} status-list ex-status-list length-ex word terminal backup]
   (when (and (check-status status status-list ex-status-list)
              (not (.contains length-ex (actual-length response))))
     (let [match
           (process-match response (actual-length response) word)] 
       (t/log terminal match)
+      (bk/save-match backup (:id @state) match)
       (swap! matches conj match))))
 
-(defn process-words [terminal base-url code-list ex-code-list header method filter-lengths follow-redirects?]
+(defn process-words [terminal backup base-url code-list ex-code-list header method filter-lengths follow-redirects?]
   (sp/go-loop [requests 0]
               (if-let [word (sp/take! word-chan)]
                 (do 
                   (-> (mk-request base-url word method header follow-redirects?)
-                      (validate-request code-list ex-code-list filter-lengths word terminal))
+                      (validate-request code-list ex-code-list filter-lengths word terminal backup))
                   (swap! stats update :processed-words inc)
                   (recur (inc requests)))
                 (do 
@@ -196,7 +201,7 @@
   (println msg)
   (System/exit status))
 
-(defn start-scan [ {:keys [terminal]} {:keys [wordlist url match-codes exclude-codes header method filter-lengths follow-redirects]}]
+(defn start-scan [ {:keys [terminal backup]} {:keys [wordlist url match-codes exclude-codes header method filter-lengths follow-redirects]}]
   (let [_
         (println banner)
         
@@ -204,14 +209,29 @@
         (t/handle terminal)
 
         _
+        (bk/init-db)
+
+        wordlist-hash
+        (bk/sha256sum wordlist)
+
+        date
+        (jt/format "YYYY-MM-dd" (jt/local-date))
+
+        _
+        (swap! state assoc :wordlist-hash wordlist-hash :wordlist wordlist :date date)
+
+        _
+        (bk/create-state backup @state @stats)
+
+        _
         (send-words (str/split (slurp wordlist) #"\n"))
 
         _
-        (monitor terminal)
+        (monitor terminal backup)
 
         _
         (doseq [_ (range 30)] 
-          (process-words terminal url match-codes exclude-codes header method filter-lengths follow-redirects))]
+          (process-words terminal backup url match-codes exclude-codes header method filter-lengths follow-redirects))]
     (loop [threads-done 1 acc-requests 0]
       (let [requests (sp/take! threads-chan)]
         (if (= threads-done 31)
@@ -224,11 +244,12 @@
             ;(timbre/debug (str "thread finished: " threads-done  " requests: " requests ))
             (recur (inc threads-done) (+ acc-requests requests))))))))
 
-(def system {:terminal t/StandardTerminal})
+(def system {:terminal t/StandardTerminal
+             :backup bk/DataBackup})
 
 (defn -main [& args]
   (let [{:keys [exit-message ok? options]} (validate-args args)] 
     (if exit-message
       (exit (if ok? 0 1) exit-message)
-      (do (swap! state assoc :options options)
+      (do (swap! state assoc :options (dissoc options :verbosity))
           (start-scan system options)))))
