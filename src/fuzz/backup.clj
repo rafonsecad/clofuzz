@@ -1,5 +1,6 @@
 (ns fuzz.backup
-  (:require [next.jdbc :as jdbc]
+  (:require [clojure.java.io :as io]
+            [next.jdbc :as jdbc]
             [next.jdbc.sql :as sql])
   (:import (java.nio.file Files
                           Paths) 
@@ -33,7 +34,7 @@
                                                          FOREIGN KEY (scanning_id) REFERENCES scannings (id))"])
 
 (defn sha256sum [pathfile]
-  (let [uri (new URI (str "file://" pathfile))
+  (let [uri (.toURI (io/as-file (io/file pathfile)))
         path (Paths/get uri)
         data (Files/readAllBytes path)
         hash-data (.digest (MessageDigest/getInstance "SHA-256") data)
