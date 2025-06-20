@@ -7,7 +7,13 @@
            (java.net URI)
            (java.security MessageDigest)))
 
-(def db {:dbtype "sqlite" :dbname "clofuzz.db"})
+
+(defn get-db-location []
+  (let  [path (str (System/getenv "HOME") "/.clofuzz/clofuzz.db")
+         _ (io/make-parents path)]
+    path))
+
+(def db {:dbtype "sqlite" :dbname (get-db-location)})
 (def ds (jdbc/get-datasource db))
 
 (def scannings-table ["CREATE TABLE IF NOT EXISTS scannings (id INTEGER PRIMARY KEY,
@@ -42,41 +48,34 @@
     (.toString hash-int 16)))
 
 (defprotocol BackupProtocol
+  (init [_])
   (create-state [_ state stats])
   (update-state [_ id stats])
   (save-match [_ id match]))
 
+(defrecord DataBackup [data-source]
+  BackupProtocol
+  (init [{:keys [data-source]}]
+    (jdbc/execute! data-source scannings-table)
+    (jdbc/execute! data-source matches-table))
+  (create-state [{:keys [data-source]} state stats]
+    (let [scanning (-> (:options state)
+                       (assoc :id (:id state))
+                       (assoc :date (:date state))
+                       (assoc :wordlist-hash (:wordlist-hash state))
+                       (assoc :total (:total stats))
+                       (assoc :processed-words (:processed-words stats)))]
+      (sql/insert! data-source :scannings scanning jdbc/snake-kebab-opts)))
 
-(defn get-home []
-  (System/getenv "HOME"))
+  (update-state [{:keys [data-source]} id stats]
+    (sql/update! data-source
+                 :scannings
+                 (select-keys stats [:total :processed-words]) 
+                 {:id id} 
+                 jdbc/snake-kebab-opts))
 
-(defn get-pwd []
-  (System/getenv "PWD"))
-
-(defn init-db []
-  (jdbc/execute! ds scannings-table)
-  (jdbc/execute! ds matches-table))
-
-(def DataBackup
-  (reify BackupProtocol
-    (create-state [_ state stats]
-      (let [scanning (-> (:options state)
-                         (assoc :id (:id state))
-                         (assoc :date (:date state))
-                         (assoc :wordlist-hash (:wordlist-hash state))
-                         (assoc :total (:total stats))
-                         (assoc :processed-words (:processed-words stats)))]
-        (sql/insert! ds :scannings scanning jdbc/snake-kebab-opts)))
-
-    (update-state [_ id stats]
-      (sql/update! ds 
-                   :scannings
-                   (select-keys stats [:total :processed-words]) 
-                   {:id id} 
-                   jdbc/snake-kebab-opts))
-
-    (save-match [_ id match]
-      (sql/insert! ds
-                   :matches 
-                   (assoc match :scanning-id id) 
-                   jdbc/snake-kebab-opts))))
+  (save-match [{:keys [data-source]} id match]
+    (sql/insert! data-source
+                 :matches 
+                 (assoc match :scanning-id id) 
+                 jdbc/snake-kebab-opts)))

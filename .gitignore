@@ -5,4 +5,4 @@ target/*
 .lsp/*
 *.jar
 .clj-kondo/*
-clofuzz.db
+test-resources/clofuzz.db

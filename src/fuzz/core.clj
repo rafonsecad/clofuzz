@@ -209,7 +209,7 @@
         (t/handle terminal)
 
         _
-        (bk/init-db)
+        (bk/init backup)
 
         wordlist-hash
         (bk/sha256sum wordlist)
@@ -245,7 +245,7 @@
             (recur (inc threads-done) (+ acc-requests requests))))))))
 
 (def system {:terminal t/StandardTerminal
-             :backup bk/DataBackup})
+             :backup (bk/->DataBackup bk/ds)})
 
 (defn -main [& args]
   (let [{:keys [exit-message ok? options]} (validate-args args)] 
