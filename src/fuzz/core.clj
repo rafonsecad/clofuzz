@@ -115,17 +115,18 @@
       (bk/save-match backup (:id @state) match)
       (swap! matches conj match))))
 
-(defn process-words [terminal backup base-url code-list ex-code-list header method filter-lengths follow-redirects?]
-  (sp/go-loop [requests 0]
-              (if-let [word (sp/take! word-chan)]
-                (do 
-                  (-> (mk-request base-url word method header follow-redirects?)
-                      (validate-request code-list ex-code-list filter-lengths word terminal backup))
-                  (swap! stats update :processed-words inc)
-                  (recur (inc requests)))
-                (do 
-                  (sp/put! threads-chan requests)
-                  requests))))
+(defn process-words [terminal backup]
+  (let [{:keys [url match-codes exclude-codes header method filter-lengths follow-redirects?]} (:options @state)]
+    (sp/go-loop [requests 0]
+                (if-let [word (sp/take! word-chan)]
+                  (do 
+                    (-> (mk-request url word method header follow-redirects?)
+                        (validate-request match-codes exclude-codes filter-lengths word terminal backup))
+                    (swap! stats update :processed-words inc)
+                    (recur (inc requests)))
+                  (do 
+                    (sp/put! threads-chan requests)
+                    requests)))))
 
 (defn parse-mc [codes]
   (->> (str/split codes #",")
@@ -201,7 +202,7 @@
   (println msg)
   (System/exit status))
 
-(defn start-scan [ {:keys [terminal backup]} {:keys [wordlist url match-codes exclude-codes header method filter-lengths follow-redirects]}]
+(defn start-scan [ {:keys [terminal backup]}]
   (let [_
         (println banner)
         
@@ -210,6 +211,9 @@
 
         _
         (bk/init backup)
+
+        wordlist
+        (get-in @state [:options :wordlist])
 
         wordlist-hash
         (bk/sha256sum wordlist)
@@ -231,7 +235,7 @@
 
         _
         (doseq [_ (range 30)] 
-          (process-words terminal backup url match-codes exclude-codes header method filter-lengths follow-redirects))]
+          (process-words terminal backup))]
     (loop [threads-done 1 acc-requests 0]
       (let [requests (sp/take! threads-chan)]
         (if (= threads-done 31)
@@ -252,4 +256,4 @@
     (if exit-message
       (exit (if ok? 0 1) exit-message)
       (do (swap! state assoc :options (dissoc options :verbosity))
-          (start-scan system options)))))
+          (start-scan system)))))
