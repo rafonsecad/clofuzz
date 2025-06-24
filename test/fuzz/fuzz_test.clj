@@ -2,6 +2,7 @@
   (:require [clojure.test :refer :all]
             [fuzz.core :as fuzz]
             [fuzz.terminal :as fuzz-t]
+            [fuzz.backup :as fuzz-bk]
             [ring.adapter.jetty :as jetty]))
 
 (def MockTerminal 
@@ -9,6 +10,13 @@
     (handle [_])
     (log [_ msg])
     (stop [_])))
+
+(def MockBackup
+  (reify fuzz-bk/BackupProtocol
+    (init [_])
+    (create-state [_ state stats])
+    (update-state [_ id stats])
+    (save-match [_ id match])))
 
 (defn ok-handler [request]
   (case (:uri request)
@@ -54,7 +62,7 @@
            (fuzz/mk-request (:url-fuzz mock-server) "ok" "GET" {} false)
 
            _
-           (fuzz/validate-request request [200] [] [] "ok" MockTerminal)
+           (fuzz/validate-request request [200] [] [] "ok" MockTerminal MockBackup)
 
            _
            (.stop (:server mock-server))]
@@ -72,7 +80,7 @@
            (fuzz/mk-request (:url-fuzz mock-server) "guess" "GET" {} false)
 
            _
-           (fuzz/validate-request request [200] []  [] "guess" MockTerminal)
+           (fuzz/validate-request request [200] []  [] "guess" MockTerminal MockBackup)
 
            _
            (.stop (:server mock-server))]
@@ -91,7 +99,7 @@
            (fuzz/mk-request (:url-fuzz mock-server) "ok-no-content-length" "GET" {} false)
 
            _
-           (fuzz/validate-request request [200] [] [] "ok-no-content-length" MockTerminal)
+           (fuzz/validate-request request [200] [] [] "ok-no-content-length" MockTerminal MockBackup)
 
            _
            (.stop (:server mock-server))]
@@ -110,7 +118,7 @@
            (fuzz/mk-request (:url-fuzz mock-server) "guess" "GET" {} false)
 
            _
-           (fuzz/validate-request request [404] [] [9] "guess" MockTerminal)
+           (fuzz/validate-request request [404] [] [9] "guess" MockTerminal MockBackup)
 
            _
            (.stop (:server mock-server))]
@@ -129,7 +137,7 @@
            (fuzz/mk-request (:url-fuzz mock-server) "ok" "POST" {} false)
 
            _
-           (fuzz/validate-request request [200] [] [] "ok" MockTerminal)
+           (fuzz/validate-request request [200] [] [] "ok" MockTerminal MockBackup)
 
            _
            (.stop (:server mock-server))]
@@ -147,7 +155,7 @@
            (fuzz/mk-request (:url-fuzz mock-server) "ok" "GET" {} false)
 
            _
-           (fuzz/validate-request request [200] [] [] "ok" MockTerminal)
+           (fuzz/validate-request request [200] [] [] "ok" MockTerminal MockBackup)
 
            _
            (.stop (:server mock-server))]
@@ -166,7 +174,7 @@
            (fuzz/mk-request (:url-fuzz mock-server) "ok" "GET" {} false)
 
            _
-           (fuzz/validate-request request [200] [200] [] "ok" MockTerminal)
+           (fuzz/validate-request request [200] [200] [] "ok" MockTerminal MockBackup)
 
            _
            (.stop (:server mock-server))]
