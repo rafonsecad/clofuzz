@@ -5,6 +5,7 @@
     [clojure.string :as str]
     [clojure.java.io :as io]
     [clojure.set :as set]
+    [clojure.edn :as edn]
     [clj-http.client :as client]
     [promesa.exec.csp :as sp]
     [taoensso.timbre :as timbre]
@@ -170,6 +171,8 @@
                   [nil "--filter-lengths LENGTHS" "exclude content length list separated by comma"
                    :default []
                    :parse-fn parse-mc]
+                  [nil "--user-agent PREDEFINED-USER-AGENT" "add predefined user agent header"
+                   :default nil]
                   [nil "--follow-redirects" "follow redirects, disabled by default" :default false]
                   ["-h" "--help" "prints help"]])
 
@@ -202,7 +205,39 @@
   (println msg)
   (System/exit status))
 
-(defn start-scan [ {:keys [terminal backup]}]
+(def user-agent-file (str (System/getenv "HOME") "/.clofuzz/user-agents.edn"))
+
+(defn filter-options [options]
+  (select-keys options [:url
+                        :wordlist
+                        :header
+                        :method
+                        :match-codes
+                        :exclude-codes
+                        :filter-lengths
+                        :follow-redirects]))
+
+(defn select-user-agents [terminal {:keys [user-agent], :as options}]
+  (if (.exists (io/file user-agent-file)) 
+    (let [u-agents (edn/read-string (slurp user-agent-file))
+
+          full-agent (if-let [picked-agent ((keyword user-agent) u-agents)]
+                       picked-agent
+                       nil)]
+
+      (if (nil? full-agent) 
+        (do
+          (t/log terminal (str "[Warning] couldn't find user-agent '" user-agent "' will use the default user-agent instead")) 
+          (filter-options options))
+
+        (-> (assoc-in options [:header "User-Agent"] full-agent)
+            (filter-options))))
+
+    (do
+      (t/log terminal (str "[Warning] file not found: " user-agent-file " will use the default user-agent instead")) 
+      (filter-options options))))
+
+(defn start-scan [ {:keys [terminal backup]} prog-opt]
   (let [_
         (println banner)
         
@@ -211,6 +246,11 @@
 
         _
         (bk/init backup)
+
+        _
+        (swap! state assoc :options (if (some? (:user-agent prog-opt))
+                                      (select-user-agents terminal prog-opt)
+                                      (filter-options prog-opt)))
 
         wordlist
         (get-in @state [:options :wordlist])
@@ -251,9 +291,9 @@
 (def system {:terminal t/StandardTerminal
              :backup (bk/->DataBackup bk/ds)})
 
+
 (defn -main [& args]
   (let [{:keys [exit-message ok? options]} (validate-args args)] 
     (if exit-message
       (exit (if ok? 0 1) exit-message)
-      (do (swap! state assoc :options (dissoc options :verbosity))
-          (start-scan system)))))
+      (start-scan system options))))
