@@ -1,0 +1,2 @@
+[{:path "/zpravy" :status 200 :body "OK"}
+ {:path "/zamora" :status 200 :body "OK"}]
