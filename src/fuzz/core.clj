@@ -12,7 +12,11 @@
     [java-time.api :as jt]
     [clojure.tools.cli :refer [parse-opts]])
   (:import
-    [org.apache.http.impl.client HttpClientBuilder])
+    [org.apache.http.impl.client HttpClientBuilder]
+    (java.util.concurrent CountDownLatch
+                          ConcurrentHashMap
+                          Semaphore
+                          Executors))
   (:gen-class))
 
 (def banner 
@@ -32,9 +36,14 @@
 
 (timbre/set-min-level! :error)
 
+(defonce semaphore (Semaphore. 50 true))
+(defonce virtual-executor (Executors/newVirtualThreadPerTaskExecutor))
+
 (def word-chan (sp/chan :buf 35))
 (def threads-chan (sp/chan))
-(def matches (atom []))
+
+(def matches (ConcurrentHashMap.))
+
 (def state (atom {:id (rand-int 20000)}))
 (def stats (atom {:total 0 :processed-words 0}))
 
@@ -73,6 +82,7 @@
      :headers header-fuzz}))
 
 (defn mk-request [base-url word method header follow-redirects?]
+  (.acquire semaphore)
   (try 
     (let [fuzz-params (fuzz->word word base-url header)]
       (client/request 
@@ -84,7 +94,9 @@
          :http-builder-fns [(fn [^HttpClientBuilder builder _]
                               (.disableAutomaticRetries builder))]}))
     (catch Exception e
-      (timbre/debug (str "error connecting to server " (.getLocalizedMessage e) " for word " word)))))
+      (timbre/debug (str "error connecting to server " (.getLocalizedMessage e) " for word " word)))
+    (finally
+      (.release semaphore))))
 
 (defn process-match [{:keys [status  headers  trace-redirects]} actual-length word]
   (cond
@@ -108,13 +120,16 @@
     (.contains status-list status)))
 
 (defn validate-request [{:keys [status] :as response} status-list ex-status-list length-ex word terminal backup]
+  (.put matches word status)
   (when (and (check-status status status-list ex-status-list)
              (not (.contains length-ex (actual-length response))))
     (let [match
           (process-match response (actual-length response) word)] 
-      (t/log terminal match)
-      (bk/save-match backup (:id @state) match)
-      (swap! matches conj match))))
+      ;(t/log terminal match)
+      ;(bk/save-match backup (:id @state) match)
+      ;(swap! matches conj match)
+      (println match)
+      )))
 
 (defn process-words [terminal backup]
   (let [{:keys [url match-codes exclude-codes header method filter-lengths follow-redirects?]} (:options @state)]
@@ -128,6 +143,19 @@
                   (do 
                     (sp/put! threads-chan requests)
                     requests)))))
+
+(defn process-dictionary [terminal backup dictionary]
+  (let [{:keys [url match-codes exclude-codes header method filter-lengths follow-redirects?]} (:options @state)
+        latch (CountDownLatch. (count dictionary))
+        _ (println "latch " (count dictionary))]
+    (doseq [word dictionary]
+      (.submit virtual-executor (fn []
+                                  (-> (mk-request url word method header follow-redirects?)
+                                      (validate-request match-codes exclude-codes filter-lengths word terminal backup))
+                                  (.countDown latch))))
+
+    (.await latch)
+    (println (into {} matches))))
 
 (defn parse-mc [codes]
   (->> (str/split codes #",")
@@ -267,26 +295,31 @@
         _
         (bk/create-state backup @state @stats)
 
-        _
-        (send-words (str/split (slurp wordlist) #"\n"))
+        ;_
+        ;(send-words (str/split (slurp wordlist) #"\n"))
 
         _
         (monitor terminal backup)
 
-        _
-        (doseq [_ (range 30)] 
-          (process-words terminal backup))]
-    (loop [threads-done 1 acc-requests 0]
-      (let [requests (sp/take! threads-chan)]
-        (if (= threads-done 31)
-          (do
-            ;(timbre/debug (str "thread finished: " threads-done  " requests: " requests ))
-            (t/log terminal (str "threads spawned: " (dec threads-done)  " total requests: " (+ acc-requests requests) ))
-            (t/stop terminal)
-            threads-done)
-          (do
-            ;(timbre/debug (str "thread finished: " threads-done  " requests: " requests ))
-            (recur (inc threads-done) (+ acc-requests requests))))))))
+        ;_
+        ;(doseq [_ (range 30)] 
+        ;  (process-words terminal backup))
+        ]
+    (process-dictionary terminal backup (str/split (slurp wordlist) #"\n"))
+
+    ;(Thread/sleep 90000)
+    ))
+    ;;(loop [threads-done 1 acc-requests 0]
+    ;;  (let [requests (sp/take! threads-chan)]
+    ;;    (if (= threads-done 31)
+    ;;      (do
+    ;;        ;(timbre/debug (str "thread finished: " threads-done  " requests: " requests ))
+    ;;        (t/log terminal (str "threads spawned: " (dec threads-done)  " total requests: " (+ acc-requests requests) ))
+    ;;        (t/stop terminal)
+    ;;        threads-done)
+    ;;      (do
+    ;;        ;(timbre/debug (str "thread finished: " threads-done  " requests: " requests ))
+    ;;        (recur (inc threads-done) (+ acc-requests requests))))))))
 
 (def system {:terminal t/StandardTerminal
              :backup (bk/->DataBackup bk/ds)})
