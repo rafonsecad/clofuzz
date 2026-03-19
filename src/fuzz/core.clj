@@ -36,13 +36,17 @@
 
 (timbre/set-min-level! :error)
 
-(defonce semaphore (Semaphore. 50 true))
+(defonce semaphore (Semaphore. 60 true))
 (defonce virtual-executor (Executors/newVirtualThreadPerTaskExecutor))
 
 (def word-chan (sp/chan :buf 35))
 (def threads-chan (sp/chan))
 
 (def matches (ConcurrentHashMap.))
+
+(def stats-lock (Object.))
+(def stats-map {:total 0 :processed-words 0})
+(def words-agent (agent {:total 0 :processed-words 0}))
 
 (def state (atom {:id (rand-int 20000)}))
 (def stats (atom {:total 0 :processed-words 0}))
@@ -60,15 +64,15 @@
 
 (defn monitor [terminal backup]
   (sp/go-loop []
-              (if (not= (:total @stats) (:processed-words @stats))
+              (if (not= (:total @words-agent) (:processed-words @words-agent))
                 (do 
-                  (t/send-stats terminal @stats)
-                  (bk/update-state backup (:id @state) @stats)
+                  (t/send-stats terminal @words-agent)
+                  ;;(bk/update-state backup (:id @state) @stats)
                   (Thread/sleep 100)
                   (recur))
                 (do
-                  (t/send-stats terminal @stats)
-                  (bk/update-state backup (:id @state) @stats)
+                  (t/send-stats terminal @words-agent)
+                  ;;(bk/update-state backup (:id @state) @stats)
                   (sp/put! threads-chan 0)
                   nil))))
 
@@ -120,15 +124,12 @@
     (.contains status-list status)))
 
 (defn validate-request [{:keys [status] :as response} status-list ex-status-list length-ex word terminal backup]
-  (.put matches word status)
   (when (and (check-status status status-list ex-status-list)
              (not (.contains length-ex (actual-length response))))
     (let [match
           (process-match response (actual-length response) word)] 
-      ;(t/log terminal match)
+      (t/log terminal match)
       ;(bk/save-match backup (:id @state) match)
-      ;(swap! matches conj match)
-      (println match)
       )))
 
 (defn process-words [terminal backup]
@@ -152,10 +153,10 @@
       (.submit virtual-executor (fn []
                                   (-> (mk-request url word method header follow-redirects?)
                                       (validate-request match-codes exclude-codes filter-lengths word terminal backup))
-                                  (.countDown latch))))
+                                  (.countDown latch)
+                                  (send words-agent update :processed-words inc))))
 
-    (.await latch)
-    (println (into {} matches))))
+    (.await latch)))
 
 (defn parse-mc [codes]
   (->> (str/split codes #",")
@@ -299,15 +300,18 @@
         ;(send-words (str/split (slurp wordlist) #"\n"))
 
         _
+        (send words-agent assoc :total (count (str/split (slurp wordlist) #"\n")))
+
+        _
         (monitor terminal backup)
 
         ;_
         ;(doseq [_ (range 30)] 
         ;  (process-words terminal backup))
-        ]
+        start-clock (. System (nanoTime))]
     (process-dictionary terminal backup (str/split (slurp wordlist) #"\n"))
-
-    ;(Thread/sleep 90000)
+    (shutdown-agents)
+    (println "Total time " (/ (double (- (. System (nanoTime)) start-clock)) 1000000.0) " ms")
     ))
     ;;(loop [threads-done 1 acc-requests 0]
     ;;  (let [requests (sp/take! threads-chan)]
