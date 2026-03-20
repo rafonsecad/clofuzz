@@ -7,14 +7,12 @@
     [clojure.set :as set]
     [clojure.edn :as edn]
     [clj-http.client :as client]
-    [promesa.exec.csp :as sp]
     [taoensso.timbre :as timbre]
     [java-time.api :as jt]
     [clojure.tools.cli :refer [parse-opts]])
   (:import
     [org.apache.http.impl.client HttpClientBuilder]
     (java.util.concurrent CountDownLatch
-                          ConcurrentHashMap
                           Semaphore
                           Executors))
   (:gen-class))
@@ -43,8 +41,13 @@
 (def stats (agent {:total 0 :processed-words 0}))
 (def state (atom {:id (rand-int 20000)}))
 
+(defn init-system [terminal backup]
+  (t/handle terminal)
+  (bk/init backup)
+  (bk/create-state backup @state @stats))
+
 (defn monitor [terminal backup]
-  (.submit scheduler-executor (fn [] 
+    (.submit scheduler-executor (fn [] 
                                 (loop []
                                   (if (not= (:total @stats) (:processed-words @stats))
                                     (do 
@@ -235,15 +238,8 @@
       (filter-options options))))
 
 (defn start-scan [ {:keys [terminal backup]} prog-opt]
-  (let [_
-        (println banner)
-        
-        _
-        (t/handle terminal)
-
-        _
-        (bk/init backup)
-
+  (println banner)
+  (let [ 
         _
         (swap! state assoc :options (if (some? (:user-agent prog-opt))
                                       (select-user-agents terminal prog-opt)
@@ -261,18 +257,21 @@
         _
         (swap! state assoc :wordlist-hash wordlist-hash :wordlist wordlist :date date)
 
-        _
-        (send stats assoc :total (count (str/split (slurp wordlist) #"\n")))
+        dictionary
+        (str/split (slurp wordlist) #"\n")
 
         _
-        (bk/create-state backup @state @stats)
+        (send stats assoc :total (count dictionary))
+
+        _
+        (init-system terminal backup)
         
         _
         (monitor terminal backup)
 
         start-clock
         (. System (nanoTime))]
-    (process-dictionary terminal backup (str/split (slurp wordlist) #"\n"))
+    (process-dictionary terminal backup dictionary)
     (shutdown-agents)
     (println "Total time " (/ (double (- (. System (nanoTime)) start-clock)) 1000000.0) " ms")
     (t/stop terminal)))
