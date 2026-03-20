@@ -36,45 +36,27 @@
 
 (timbre/set-min-level! :error)
 
-(defonce semaphore (Semaphore. 60 true))
+(defonce semaphore (Semaphore. 30 true))
+(defonce scheduler-executor (Executors/newFixedThreadPool 2))
 (defonce virtual-executor (Executors/newVirtualThreadPerTaskExecutor))
 
-(def word-chan (sp/chan :buf 35))
-(def threads-chan (sp/chan))
-
-(def matches (ConcurrentHashMap.))
-
-(def stats-lock (Object.))
-(def stats-map {:total 0 :processed-words 0})
-(def words-agent (agent {:total 0 :processed-words 0}))
-
+(def stats (agent {:total 0 :processed-words 0}))
 (def state (atom {:id (rand-int 20000)}))
-(def stats (atom {:total 0 :processed-words 0}))
-
-(defn send-words [queue]
-  (swap! stats assoc :total (count queue))
-  (sp/go-loop [words queue]
-           (if (empty? words)
-             (do
-               (sp/close! word-chan)
-               nil)
-             (do
-               (sp/put! word-chan (first words))
-               (recur (rest words))))))
 
 (defn monitor [terminal backup]
-  (sp/go-loop []
-              (if (not= (:total @words-agent) (:processed-words @words-agent))
-                (do 
-                  (t/send-stats terminal @words-agent)
-                  ;;(bk/update-state backup (:id @state) @stats)
-                  (Thread/sleep 100)
-                  (recur))
-                (do
-                  (t/send-stats terminal @words-agent)
-                  ;;(bk/update-state backup (:id @state) @stats)
-                  (sp/put! threads-chan 0)
-                  nil))))
+  (.submit scheduler-executor (fn [] 
+                                (loop []
+                                  (if (not= (:total @stats) (:processed-words @stats))
+                                    (do 
+                                      (t/send-stats terminal @stats)
+                                      (bk/update-state backup (:id @state) @stats)
+                                      (Thread/sleep 50)
+                                      (recur))
+                                    (do
+                                      (t/send-stats terminal @stats)
+                                      (bk/update-state backup (:id @state) @stats)
+                                      nil)))))
+  (.shutdown scheduler-executor))
 
 (defn fuzz->word [word base-url header]
   (let [header-fuzz
@@ -129,34 +111,20 @@
     (let [match
           (process-match response (actual-length response) word)] 
       (t/log terminal match)
-      ;(bk/save-match backup (:id @state) match)
-      )))
-
-(defn process-words [terminal backup]
-  (let [{:keys [url match-codes exclude-codes header method filter-lengths follow-redirects?]} (:options @state)]
-    (sp/go-loop [requests 0]
-                (if-let [word (sp/take! word-chan)]
-                  (do 
-                    (-> (mk-request url word method header follow-redirects?)
-                        (validate-request match-codes exclude-codes filter-lengths word terminal backup))
-                    (swap! stats update :processed-words inc)
-                    (recur (inc requests)))
-                  (do 
-                    (sp/put! threads-chan requests)
-                    requests)))))
+      (bk/save-match backup (:id @state) match))))
 
 (defn process-dictionary [terminal backup dictionary]
   (let [{:keys [url match-codes exclude-codes header method filter-lengths follow-redirects?]} (:options @state)
-        latch (CountDownLatch. (count dictionary))
-        _ (println "latch " (count dictionary))]
+        latch (CountDownLatch. (count dictionary))]
     (doseq [word dictionary]
       (.submit virtual-executor (fn []
                                   (-> (mk-request url word method header follow-redirects?)
                                       (validate-request match-codes exclude-codes filter-lengths word terminal backup))
                                   (.countDown latch)
-                                  (send words-agent update :processed-words inc))))
+                                  (send stats update :processed-words inc))))
 
-    (.await latch)))
+    (.await latch)
+    (Thread/sleep 100)))
 
 (defn parse-mc [codes]
   (->> (str/split codes #",")
@@ -294,38 +262,22 @@
         (swap! state assoc :wordlist-hash wordlist-hash :wordlist wordlist :date date)
 
         _
-        (bk/create-state backup @state @stats)
-
-        ;_
-        ;(send-words (str/split (slurp wordlist) #"\n"))
+        (send stats assoc :total (count (str/split (slurp wordlist) #"\n")))
 
         _
-        (send words-agent assoc :total (count (str/split (slurp wordlist) #"\n")))
-
+        (bk/create-state backup @state @stats)
+        
         _
         (monitor terminal backup)
 
-        ;_
-        ;(doseq [_ (range 30)] 
-        ;  (process-words terminal backup))
-        start-clock (. System (nanoTime))]
+        start-clock
+        (. System (nanoTime))]
     (process-dictionary terminal backup (str/split (slurp wordlist) #"\n"))
     (shutdown-agents)
     (println "Total time " (/ (double (- (. System (nanoTime)) start-clock)) 1000000.0) " ms")
-    ))
-    ;;(loop [threads-done 1 acc-requests 0]
-    ;;  (let [requests (sp/take! threads-chan)]
-    ;;    (if (= threads-done 31)
-    ;;      (do
-    ;;        ;(timbre/debug (str "thread finished: " threads-done  " requests: " requests ))
-    ;;        (t/log terminal (str "threads spawned: " (dec threads-done)  " total requests: " (+ acc-requests requests) ))
-    ;;        (t/stop terminal)
-    ;;        threads-done)
-    ;;      (do
-    ;;        ;(timbre/debug (str "thread finished: " threads-done  " requests: " requests ))
-    ;;        (recur (inc threads-done) (+ acc-requests requests))))))))
+    (t/stop terminal)))
 
-(def system {:terminal t/StandardTerminal
+(def system {:terminal t/QueueTerminal
              :backup (bk/->DataBackup bk/ds)})
 
 

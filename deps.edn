@@ -15,7 +15,8 @@
  :paths ["src"]
 
  :aliases
- {:run {:main-opts ["-m" "fuzz.core"]}
+ {:run {:main-opts ["-m" "fuzz.core"]
+        :jvm-opts ["--enable-native-access=ALL-UNNAMED"]}
 
   :build {:deps {io.github.clojure/tools.build  {:git/tag "v0.9.5" :git/sha "24f2894"}}
             :ns-default build}
