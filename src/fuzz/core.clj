@@ -114,7 +114,8 @@
     (let [match
           (process-match response (actual-length response) word)] 
       (t/log terminal match)
-      (bk/save-match backup (:id @state) match))))
+      (bk/save-match backup (:id @state) match)
+      match)))
 
 (defn process-dictionary [terminal backup dictionary]
   (let [{:keys [url match-codes exclude-codes header method filter-lengths follow-redirects?]} (:options @state)
