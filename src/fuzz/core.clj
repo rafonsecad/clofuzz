@@ -39,25 +39,24 @@
 (defonce virtual-executor (Executors/newVirtualThreadPerTaskExecutor))
 
 (def stats (agent {:total 0 :processed-words 0}))
-(def state (atom {:id (rand-int 20000)}))
 
-(defn init-system [terminal backup]
+(defn init-system [terminal backup state]
   (t/handle terminal)
   (bk/init backup)
-  (bk/create-state backup @state @stats))
+  (bk/create-state backup state @stats))
 
-(defn monitor [terminal backup]
+(defn monitor [terminal backup state]
     (.submit scheduler-executor (fn [] 
                                 (loop []
                                   (if (not= (:total @stats) (:processed-words @stats))
                                     (do 
                                       (t/send-stats terminal @stats)
-                                      (bk/update-state backup (:id @state) @stats)
+                                      (bk/update-state backup (:id state) @stats)
                                       (Thread/sleep 50)
                                       (recur))
                                     (do
                                       (t/send-stats terminal @stats)
-                                      (bk/update-state backup (:id @state) @stats)
+                                      (bk/update-state backup (:id state) @stats)
                                       nil)))))
   (.shutdown scheduler-executor))
 
@@ -70,10 +69,11 @@
     {:base-url url-fuzz
      :headers header-fuzz}))
 
-(defn mk-request [base-url word method header follow-redirects?]
+(defn mk-request [url method header follow-redirects?
+                  word]
   (.acquire semaphore)
   (try 
-    (let [fuzz-params (fuzz->word word base-url header)]
+    (let [fuzz-params (fuzz->word word url header)]
       (client/request 
         {:method method 
          :url (:base-url fuzz-params) 
@@ -108,22 +108,27 @@
     (not (.contains ex-status-list status))
     (.contains status-list status)))
 
-(defn validate-request [{:keys [status] :as response} status-list ex-status-list length-ex word terminal backup]
-  (when (and (check-status status status-list ex-status-list)
-             (not (.contains length-ex (actual-length response))))
+(defn validate-request [{:keys [status] :as response}
+                        match-codes exclude-codes filter-lengths
+                        word 
+                        terminal 
+                        backup
+                        id]
+  (when (and (check-status status match-codes exclude-codes)
+             (not (.contains filter-lengths (actual-length response))))
     (let [match
           (process-match response (actual-length response) word)] 
       (t/log terminal match)
-      (bk/save-match backup (:id @state) match)
+      (bk/save-match backup id match)
       match)))
 
-(defn process-dictionary [terminal backup dictionary]
-  (let [{:keys [url match-codes exclude-codes header method filter-lengths follow-redirects?]} (:options @state)
+(defn process-dictionary [terminal backup dictionary state]
+  (let [{:keys [id], {:keys [url match-codes exclude-codes header method filter-lengths follow-redirects?]} :options} state
         latch (CountDownLatch. (count dictionary))]
     (doseq [word dictionary]
       (.submit virtual-executor (fn []
-                                  (-> (mk-request url word method header follow-redirects?)
-                                      (validate-request match-codes exclude-codes filter-lengths word terminal backup))
+                                  (-> (mk-request url method header follow-redirects? word)
+                                      (validate-request match-codes exclude-codes filter-lengths word terminal backup id))
                                   (.countDown latch)
                                   (send stats update :processed-words inc))))
 
@@ -238,41 +243,40 @@
       (t/log terminal (str "[Warning] file not found: " user-agent-file " will use the default user-agent instead")) 
       (filter-options options))))
 
-(defn start-scan [ {:keys [terminal backup]} prog-opt]
-  (println banner)
-  (let [ 
-        _
-        (swap! state assoc :options (if (some? (:user-agent prog-opt))
-                                      (select-user-agents terminal prog-opt)
-                                      (filter-options prog-opt)))
-
-        wordlist
-        (get-in @state [:options :wordlist])
+(defn init-state [terminal prog-opt]
+  (let [wordlist
+        (:wordlist prog-opt)
 
         wordlist-hash
-        (bk/sha256sum wordlist)
+        (bk/sha256sum wordlist)]
 
-        date
-        (jt/format "YYYY-MM-dd" (jt/local-date))
+    {:id (rand-int 20000)
+     :wordlist-hash wordlist-hash
+     :wordlist wordlist
+     :date (jt/format "YYYY-MM-dd" (jt/local-date))
+     :options (if (some? (:user-agent prog-opt))
+                (select-user-agents terminal prog-opt)
+                (filter-options prog-opt))}))
 
-        _
-        (swap! state assoc :wordlist-hash wordlist-hash :wordlist wordlist :date date)
+(defn start-scan [ {:keys [terminal backup]} prog-opt]
+  (println banner)
+  (let [
+        main-state (init-state terminal prog-opt)
 
-        dictionary
-        (str/split (slurp wordlist) #"\n")
+        dictionary (str/split (slurp (:wordlist main-state)) #"\n") 
 
         _
         (send stats assoc :total (count dictionary))
 
         _
-        (init-system terminal backup)
-        
+        (init-system terminal backup main-state)
+
         _
-        (monitor terminal backup)
+        (monitor terminal backup main-state)
 
         start-clock
         (. System (nanoTime))]
-    (process-dictionary terminal backup dictionary)
+    (process-dictionary terminal backup dictionary main-state)
     (shutdown-agents)
     (println "Total time " (/ (double (- (. System (nanoTime)) start-clock)) 1000000.0) " ms")
     (t/stop terminal)))
