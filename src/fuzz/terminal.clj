@@ -1,7 +1,9 @@
 (ns fuzz.terminal
   (:require [promesa.exec.csp :as sp]
             [taoensso.timbre :as timbre]
-            [clojure.string :as str]))
+            [clojure.string :as str])
+  (:import (java.util.concurrent Executors
+                                 LinkedBlockingQueue)))
 
 (defprotocol TerminalProtocol
   (handle [_])
@@ -68,3 +70,41 @@
     (send-stats [_ msg] (sp/put! output-chan {:cmd :stats :text msg}))
     (stop [_] (sp/put! output-chan {:cmd :stop}))))
 
+(def executor (Executors/newFixedThreadPool 2))
+(def msg-queue (LinkedBlockingQueue.))
+
+(defn- handle-queue []
+  (.submit executor (fn []
+                      (loop []
+                        (Thread/sleep 50)
+                        (if-let [{:keys [cmd text]} (.take msg-queue)]
+                          (cond (= cmd :log)
+                                (do 
+                                  (println text)
+                                  (draw-panel)
+                                  (recur))
+
+                                (= cmd :stats)
+                                (do
+                                  (swap! progress-bar assoc :percentage (int (* (/ (:processed-words text) (:total text)) 100)) :requests (:processed-words text))
+                                  (draw-panel)
+                                  (recur))
+
+                                (= cmd :stop)
+                                (do 
+                                    (println)
+                                    (println)
+                                    (println)
+                                    nil)
+
+                                :else
+                                nil)
+                          (recur)))))
+  (.shutdown executor))
+
+(def QueueTerminal 
+  (reify TerminalProtocol
+    (handle [_] (handle-queue))
+    (log [_ msg] (.put msg-queue {:cmd :log :text msg}))
+    (send-stats [_ msg] (.put msg-queue {:cmd :stats :text msg}))
+    (stop [_] (.put msg-queue {:cmd :stop}))))

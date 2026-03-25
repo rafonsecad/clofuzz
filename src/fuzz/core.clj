@@ -7,12 +7,14 @@
     [clojure.set :as set]
     [clojure.edn :as edn]
     [clj-http.client :as client]
-    [promesa.exec.csp :as sp]
     [taoensso.timbre :as timbre]
     [java-time.api :as jt]
     [clojure.tools.cli :refer [parse-opts]])
   (:import
-    [org.apache.http.impl.client HttpClientBuilder])
+    [org.apache.http.impl.client HttpClientBuilder]
+    (java.util.concurrent CountDownLatch
+                          Semaphore
+                          Executors))
   (:gen-class))
 
 (def banner 
@@ -32,36 +34,31 @@
 
 (timbre/set-min-level! :error)
 
-(def word-chan (sp/chan :buf 35))
-(def threads-chan (sp/chan))
-(def matches (atom []))
-(def state (atom {:id (rand-int 20000)}))
-(def stats (atom {:total 0 :processed-words 0}))
+(defonce semaphore (Semaphore. 30 true))
+(defonce scheduler-executor (Executors/newFixedThreadPool 2))
+(defonce virtual-executor (Executors/newVirtualThreadPerTaskExecutor))
 
-(defn send-words [queue]
-  (swap! stats assoc :total (count queue))
-  (sp/go-loop [words queue]
-           (if (empty? words)
-             (do
-               (sp/close! word-chan)
-               nil)
-             (do
-               (sp/put! word-chan (first words))
-               (recur (rest words))))))
+(def stats (agent {:total 0 :processed-words 0}))
 
-(defn monitor [terminal backup]
-  (sp/go-loop []
-              (if (not= (:total @stats) (:processed-words @stats))
-                (do 
-                  (t/send-stats terminal @stats)
-                  (bk/update-state backup (:id @state) @stats)
-                  (Thread/sleep 100)
-                  (recur))
-                (do
-                  (t/send-stats terminal @stats)
-                  (bk/update-state backup (:id @state) @stats)
-                  (sp/put! threads-chan 0)
-                  nil))))
+(defn init-system [terminal backup state]
+  (t/handle terminal)
+  (bk/init backup)
+  (bk/create-state backup state @stats))
+
+(defn monitor [terminal backup state]
+    (.submit scheduler-executor (fn [] 
+                                (loop []
+                                  (if (not= (:total @stats) (:processed-words @stats))
+                                    (do 
+                                      (t/send-stats terminal @stats)
+                                      (bk/update-state backup (:id state) @stats)
+                                      (Thread/sleep 50)
+                                      (recur))
+                                    (do
+                                      (t/send-stats terminal @stats)
+                                      (bk/update-state backup (:id state) @stats)
+                                      nil)))))
+  (.shutdown scheduler-executor))
 
 (defn fuzz->word [word base-url header]
   (let [header-fuzz
@@ -72,9 +69,11 @@
     {:base-url url-fuzz
      :headers header-fuzz}))
 
-(defn mk-request [base-url word method header follow-redirects?]
+(defn mk-request [url method header follow-redirects?
+                  word]
+  (.acquire semaphore)
   (try 
-    (let [fuzz-params (fuzz->word word base-url header)]
+    (let [fuzz-params (fuzz->word word url header)]
       (client/request 
         {:method method 
          :url (:base-url fuzz-params) 
@@ -84,7 +83,9 @@
          :http-builder-fns [(fn [^HttpClientBuilder builder _]
                               (.disableAutomaticRetries builder))]}))
     (catch Exception e
-      (timbre/debug (str "error connecting to server " (.getLocalizedMessage e) " for word " word)))))
+      (timbre/debug (str "error connecting to server " (.getLocalizedMessage e) " for word " word)))
+    (finally
+      (.release semaphore))))
 
 (defn process-match [{:keys [status  headers  trace-redirects]} actual-length word]
   (cond
@@ -107,27 +108,32 @@
     (not (.contains ex-status-list status))
     (.contains status-list status)))
 
-(defn validate-request [{:keys [status] :as response} status-list ex-status-list length-ex word terminal backup]
-  (when (and (check-status status status-list ex-status-list)
-             (not (.contains length-ex (actual-length response))))
+(defn validate-request [{:keys [status] :as response}
+                        match-codes exclude-codes filter-lengths
+                        word 
+                        terminal 
+                        backup
+                        id]
+  (when (and (check-status status match-codes exclude-codes)
+             (not (.contains filter-lengths (actual-length response))))
     (let [match
           (process-match response (actual-length response) word)] 
       (t/log terminal match)
-      (bk/save-match backup (:id @state) match)
-      (swap! matches conj match))))
+      (bk/save-match backup id match)
+      match)))
 
-(defn process-words [terminal backup]
-  (let [{:keys [url match-codes exclude-codes header method filter-lengths follow-redirects?]} (:options @state)]
-    (sp/go-loop [requests 0]
-                (if-let [word (sp/take! word-chan)]
-                  (do 
-                    (-> (mk-request url word method header follow-redirects?)
-                        (validate-request match-codes exclude-codes filter-lengths word terminal backup))
-                    (swap! stats update :processed-words inc)
-                    (recur (inc requests)))
-                  (do 
-                    (sp/put! threads-chan requests)
-                    requests)))))
+(defn process-dictionary [terminal backup dictionary state]
+  (let [{:keys [id], {:keys [url match-codes exclude-codes header method filter-lengths follow-redirects?]} :options} state
+        latch (CountDownLatch. (count dictionary))]
+    (doseq [word dictionary]
+      (.submit virtual-executor (fn []
+                                  (-> (mk-request url method header follow-redirects? word)
+                                      (validate-request match-codes exclude-codes filter-lengths word terminal backup id))
+                                  (.countDown latch)
+                                  (send stats update :processed-words inc))))
+
+    (.await latch)
+    (Thread/sleep 100)))
 
 (defn parse-mc [codes]
   (->> (str/split codes #",")
@@ -237,58 +243,45 @@
       (t/log terminal (str "[Warning] file not found: " user-agent-file " will use the default user-agent instead")) 
       (filter-options options))))
 
-(defn start-scan [ {:keys [terminal backup]} prog-opt]
-  (let [_
-        (println banner)
-        
-        _
-        (t/handle terminal)
-
-        _
-        (bk/init backup)
-
-        _
-        (swap! state assoc :options (if (some? (:user-agent prog-opt))
-                                      (select-user-agents terminal prog-opt)
-                                      (filter-options prog-opt)))
-
-        wordlist
-        (get-in @state [:options :wordlist])
+(defn init-state [terminal prog-opt]
+  (let [wordlist
+        (:wordlist prog-opt)
 
         wordlist-hash
-        (bk/sha256sum wordlist)
+        (bk/sha256sum wordlist)]
 
-        date
-        (jt/format "YYYY-MM-dd" (jt/local-date))
+    {:id (rand-int 20000)
+     :wordlist-hash wordlist-hash
+     :wordlist wordlist
+     :date (jt/format "YYYY-MM-dd" (jt/local-date))
+     :options (if (some? (:user-agent prog-opt))
+                (select-user-agents terminal prog-opt)
+                (filter-options prog-opt))}))
+
+(defn start-scan [ {:keys [terminal backup]} prog-opt]
+  (println banner)
+  (let [
+        main-state (init-state terminal prog-opt)
+
+        dictionary (str/split (slurp (:wordlist main-state)) #"\n") 
 
         _
-        (swap! state assoc :wordlist-hash wordlist-hash :wordlist wordlist :date date)
+        (send stats assoc :total (count dictionary))
 
         _
-        (bk/create-state backup @state @stats)
+        (init-system terminal backup main-state)
 
         _
-        (send-words (str/split (slurp wordlist) #"\n"))
+        (monitor terminal backup main-state)
 
-        _
-        (monitor terminal backup)
+        start-clock
+        (. System (nanoTime))]
+    (process-dictionary terminal backup dictionary main-state)
+    (shutdown-agents)
+    (println "Total time " (/ (double (- (. System (nanoTime)) start-clock)) 1000000.0) " ms")
+    (t/stop terminal)))
 
-        _
-        (doseq [_ (range 30)] 
-          (process-words terminal backup))]
-    (loop [threads-done 1 acc-requests 0]
-      (let [requests (sp/take! threads-chan)]
-        (if (= threads-done 31)
-          (do
-            ;(timbre/debug (str "thread finished: " threads-done  " requests: " requests ))
-            (t/log terminal (str "threads spawned: " (dec threads-done)  " total requests: " (+ acc-requests requests) ))
-            (t/stop terminal)
-            threads-done)
-          (do
-            ;(timbre/debug (str "thread finished: " threads-done  " requests: " requests ))
-            (recur (inc threads-done) (+ acc-requests requests))))))))
-
-(def system {:terminal t/StandardTerminal
+(def system {:terminal t/QueueTerminal
              :backup (bk/->DataBackup bk/ds)})
 
 
